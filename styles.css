@@ -1,0 +1,93 @@
+/* General Reset and Typography */
+body {
+  font-family: 'Noto Sans', sans-serif;
+  margin: 0;
+  padding: 0;
+  line-height: 1.6;
+  background-color: #fff;
+  color: #333;
+}
+
+header {
+  background-color: #4a90e2;
+  color: white;
+  padding: 1em;
+  text-align: center;
+}
+
+h1 {
+  margin: 0 0 0.2em 0;
+}
+
+section {
+  padding: 1em;
+}
+
+/* Layout Container */
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#input-area, #settings-panel, #output-area {
+  width: 100%;
+  max-width: 800px;
+  box-sizing: border-box;
+}
+
+/* Input & Button */
+#input-text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  padding: 10px;
+  font-size: 1em;
+  margin-bottom: 0.5em;
+}
+
+#reconstruct-btn {
+  padding: 0.6em 1em;
+  font-size: 1em;
+  background-color: #4a90e2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#reconstruct-btn:hover {
+  background-color: #3a78c2;
+}
+
+/* Results */
+.result-group {
+  margin-bottom: 20px;
+  padding: 10px;
+  border-left: 4px solid #4a90e2;
+  background: #f9f9f9;
+  border-radius: 4px;
+}
+
+.result-group code {
+  background: #eee;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.result-group ul {
+  margin-top: 0.5em;
+  padding-left: 1.2em;
+}
+
+/* Media Queries for Responsiveness */
+@media (max-width: 600px) {
+  header, section {
+    padding: 0.8em;
+  }
+
+  #reconstruct-btn {
+    width: 100%;
+    font-size: 1.1em;
+  }
+}

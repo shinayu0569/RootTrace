@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RootTrace - Proto Lexicon Reconstructor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header>
+    <h1>RootTrace</h1>
+    <p>Input descendant words in IPA, one group per paragraph.</p>
+  </header>
+
+  <section id="input-area">
+    <textarea id="input-text" placeholder="Enter descendant words here..." rows="12"></textarea>
+    <button id="reconstruct-btn">Reconstruct</button>
+  </section>
+
+  <section id="settings-panel">
+    <h2>Settings</h2>
+    <form id="settings-form">
+      <label><input type="checkbox" id="consider-syllabification" checked> Consider Syllabification (dots)</label><br>
+      <label><input type="checkbox" id="consider-stress" checked> Consider Primary Stress (ˈ)</label><br>
+      <label><input type="checkbox" id="multi-char-phonemes" checked> Handle Multi-Character Phonemes (like [t͡ʃ])</label><br>
+      <label><input type="checkbox" id="use-phonetic-features" checked> Compare using Phonetic Features (not spelling)</label><br>
+    </form>
+  </section>
+
+  <section id="output-area">
+    <h2>Proto Reconstructions</h2>
+    <div id="output"></div>
+  </section>
+
+  <script src="script.js"></script>
+</body>
+</html>
