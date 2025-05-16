@@ -54,6 +54,7 @@ const featureMap = {
   'ɹ': { place: 'alveolar', manner: 'approximant', voice: 'voiced' },
   'ɻ': { place: 'retroflex', manner: 'approximant', voice: 'voiced' },
   'j': { place: 'palatal', manner: 'approximant', voice: 'voiced' },
+  'ɰ': { place: 'velar', manner: 'approximant', voice: 'voiced' },
   'w': { place: 'labial-velar', manner: 'approximant', voice: 'voiced' },
 
   // Laterals
@@ -87,6 +88,7 @@ const featureMap = {
   'y': { height: 'close', frontness: 'front', rounded: true },
   'ɨ': { height: 'close', frontness: 'central', rounded: false },
   'ʉ': { height: 'close', frontness: 'central', rounded: true },
+  'ɯ': { height: 'close', frontness: 'back', rounded: false },
   'u': { height: 'close', frontness: 'back', rounded: true },
   'ɪ': { height: 'near-close', frontness: 'front', rounded: false },
   'ʏ': { height: 'near-close', frontness: 'front', rounded: true },
@@ -95,18 +97,21 @@ const featureMap = {
   'ø': { height: 'close-mid', frontness: 'front', rounded: true },
   'ɘ': { height: 'close-mid', frontness: 'central', rounded: false },
   'ɵ': { height: 'close-mid', frontness: 'central', rounded: true },
+  'ɤ': { height: 'close-mid', frontness: 'back', rounded: false },
   'o': { height: 'close-mid', frontness: 'back', rounded: true },
+  'ə': { height: 'mid', frontness: 'central', rounded: false }, //schwa
   'ɛ': { height: 'open-mid', frontness: 'front', rounded: false },
   'œ': { height: 'open-mid', frontness: 'front', rounded: true },
   'ɜ': { height: 'open-mid', frontness: 'central', rounded: false },
   'ɞ': { height: 'open-mid', frontness: 'central', rounded: true },
+  'ʌ': { height: 'open-mid', frontness: 'back', rounded: false },
   'ɔ': { height: 'open-mid', frontness: 'back', rounded: true },
   'æ': { height: 'near-open', frontness: 'front', rounded: false },
+  'ɐ': { height: 'near-open', frontness: 'central', rounded: false },
   'a': { height: 'open', frontness: 'front', rounded: false },
   'ɶ': { height: 'open', frontness: 'front', rounded: true },
   'ɑ': { height: 'open', frontness: 'back', rounded: false },
   'ɒ': { height: 'open', frontness: 'back', rounded: true },
-  'ə': { height: 'mid', frontness: 'central', rounded: false }, // schwa
 };
 
 
