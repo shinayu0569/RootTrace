@@ -1,7 +1,9 @@
 // ========== IPA Feature Sets ==========
 
+// ========== IPA Feature Sets (Expanded) ==========
+
 const featureMap = {
-  // Stops
+  // Stops (Pulmonic)
   'p': { place: 'bilabial', manner: 'stop', voice: 'voiceless' },
   'b': { place: 'bilabial', manner: 'stop', voice: 'voiced' },
   't': { place: 'alveolar', manner: 'stop', voice: 'voiceless' },
@@ -14,9 +16,10 @@ const featureMap = {
   'g': { place: 'velar', manner: 'stop', voice: 'voiced' },
   'q': { place: 'uvular', manner: 'stop', voice: 'voiceless' },
   'ɢ': { place: 'uvular', manner: 'stop', voice: 'voiced' },
+  'ʡ': { place: 'epiglottal', manner: 'stop', voice: 'voiceless' },
   'ʔ': { place: 'glottal', manner: 'stop', voice: 'voiceless' },
 
-  // Nasals
+  // Nasals (Pulmonic)
   'm': { place: 'bilabial', manner: 'nasal', voice: 'voiced' },
   'ɱ': { place: 'labiodental', manner: 'nasal', voice: 'voiced' },
   'n': { place: 'alveolar', manner: 'nasal', voice: 'voiced' },
@@ -25,7 +28,7 @@ const featureMap = {
   'ŋ': { place: 'velar', manner: 'nasal', voice: 'voiced' },
   'ɴ': { place: 'uvular', manner: 'nasal', voice: 'voiced' },
 
-  // Fricatives
+  // Fricatives (Pulmonic)
   'ɸ': { place: 'bilabial', manner: 'fricative', voice: 'voiceless' },
   'β': { place: 'bilabial', manner: 'fricative', voice: 'voiced' },
   'f': { place: 'labiodental', manner: 'fricative', voice: 'voiceless' },
@@ -36,6 +39,8 @@ const featureMap = {
   'z': { place: 'alveolar', manner: 'fricative', voice: 'voiced' },
   'ʃ': { place: 'postalveolar', manner: 'fricative', voice: 'voiceless' },
   'ʒ': { place: 'postalveolar', manner: 'fricative', voice: 'voiced' },
+  'ɕ': { place: 'alveolo-palatal', manner: 'fricative', voice: 'voiceless' },
+  'ʑ': { place: 'alveolo-palatal', manner: 'fricative', voice: 'voiced' },
   'ʂ': { place: 'retroflex', manner: 'fricative', voice: 'voiceless' },
   'ʐ': { place: 'retroflex', manner: 'fricative', voice: 'voiced' },
   'ç': { place: 'palatal', manner: 'fricative', voice: 'voiceless' },
@@ -49,7 +54,11 @@ const featureMap = {
   'h': { place: 'glottal', manner: 'fricative', voice: 'voiceless' },
   'ɦ': { place: 'glottal', manner: 'fricative', voice: 'voiced' },
 
-  // Approximants
+  // Lateral fricatives
+  'ɬ': { place: 'alveolar', manner: 'lateral fricative', voice: 'voiceless' },
+  'ɮ': { place: 'alveolar', manner: 'lateral fricative', voice: 'voiced' },
+
+  // Approximants (Pulmonic)
   'ʋ': { place: 'labiodental', manner: 'approximant', voice: 'voiced' },
   'ɹ': { place: 'alveolar', manner: 'approximant', voice: 'voiced' },
   'ɻ': { place: 'retroflex', manner: 'approximant', voice: 'voiced' },
@@ -57,33 +66,65 @@ const featureMap = {
   'ɰ': { place: 'velar', manner: 'approximant', voice: 'voiced' },
   'w': { place: 'labial-velar', manner: 'approximant', voice: 'voiced' },
 
-  // Laterals
+  // Laterals (Pulmonic)
   'l': { place: 'alveolar', manner: 'lateral approximant', voice: 'voiced' },
   'ɭ': { place: 'retroflex', manner: 'lateral approximant', voice: 'voiced' },
   'ʎ': { place: 'palatal', manner: 'lateral approximant', voice: 'voiced' },
   'ʟ': { place: 'velar', manner: 'lateral approximant', voice: 'voiced' },
 
-  // Trills
+  // Trills (Pulmonic)
   'ʙ': { place: 'bilabial', manner: 'trill', voice: 'voiced' },
   'r': { place: 'alveolar', manner: 'trill', voice: 'voiced' },
   'ʀ': { place: 'uvular', manner: 'trill', voice: 'voiced' },
 
-  // Flaps/Taps
+  // Flaps/Taps (Pulmonic)
   'ⱱ': { place: 'labiodental', manner: 'tap', voice: 'voiced' },
   'ɾ': { place: 'alveolar', manner: 'tap', voice: 'voiced' },
   'ɽ': { place: 'retroflex', manner: 'tap', voice: 'voiced' },
 
-  // Common Affricates
+  // Affricates (all main IPA, no diacritics)
   't͡s': { place: 'alveolar', manner: 'affricate', voice: 'voiceless' },
   'd͡z': { place: 'alveolar', manner: 'affricate', voice: 'voiced' },
+  't͡ɕ': { place: 'alveolo-palatal', manner: 'affricate', voice: 'voiceless' },
+  'd͡ʑ': { place: 'alveolo-palatal', manner: 'affricate', voice: 'voiced' },
   't͡ʃ': { place: 'postalveolar', manner: 'affricate', voice: 'voiceless' },
   'd͡ʒ': { place: 'postalveolar', manner: 'affricate', voice: 'voiced' },
   'ʈ͡ʂ': { place: 'retroflex', manner: 'affricate', voice: 'voiceless' },
   'ɖ͡ʐ': { place: 'retroflex', manner: 'affricate', voice: 'voiced' },
   'c͡ç': { place: 'palatal', manner: 'affricate', voice: 'voiceless' },
   'ɟ͡ʝ': { place: 'palatal', manner: 'affricate', voice: 'voiced' },
+  'k͡x': { place: 'velar', manner: 'affricate', voice: 'voiceless' },
+  'g͡ɣ': { place: 'velar', manner: 'affricate', voice: 'voiced' },
+  'q͡χ': { place: 'uvular', manner: 'affricate', voice: 'voiceless' },
+  'ɢ͡ʁ': { place: 'uvular', manner: 'affricate', voice: 'voiced' },
 
-  // Vowels
+  // Clicks (with voiceless, voiced, nasalized)
+  'ʘ': { place: 'bilabial', manner: 'click', voice: 'voiceless' },
+  'ǀ': { place: 'dental', manner: 'click', voice: 'voiceless' },
+  'ǃ': { place: 'postalveolar', manner: 'click', voice: 'voiceless' },
+  'ǂ': { place: 'palatal', manner: 'click', voice: 'voiceless' },
+  'ǁ': { place: 'lateral', manner: 'click', voice: 'voiceless' },
+  // Voiced clicks (symbol + ɡ)
+  'ɡʘ': { place: 'bilabial', manner: 'click', voice: 'voiced' },
+  'ɡǀ': { place: 'dental', manner: 'click', voice: 'voiced' },
+  'ɡǃ': { place: 'postalveolar', manner: 'click', voice: 'voiced' },
+  'ɡǂ': { place: 'palatal', manner: 'click', voice: 'voiced' },
+  'ɡǁ': { place: 'lateral', manner: 'click', voice: 'voiced' },
+  // Nasal clicks (ŋ + click)
+  'ŋʘ': { place: 'bilabial', manner: 'click', voice: 'nasal' },
+  'ŋǀ': { place: 'dental', manner: 'click', voice: 'nasal' },
+  'ŋǃ': { place: 'postalveolar', manner: 'click', voice: 'nasal' },
+  'ŋǂ': { place: 'palatal', manner: 'click', voice: 'nasal' },
+  'ŋǁ': { place: 'lateral', manner: 'click', voice: 'nasal' },
+
+  // Implosives (voiced)
+  'ɓ': { place: 'bilabial', manner: 'implosive', voice: 'voiced' },
+  'ɗ': { place: 'alveolar', manner: 'implosive', voice: 'voiced' },
+  'ʄ': { place: 'palatal', manner: 'implosive', voice: 'voiced' },
+  'ɠ': { place: 'velar', manner: 'implosive', voice: 'voiced' },
+  'ʛ': { place: 'uvular', manner: 'implosive', voice: 'voiced' },
+
+  // Vowels (all main IPA vowels)
   'i': { height: 'close', frontness: 'front', rounded: false },
   'y': { height: 'close', frontness: 'front', rounded: true },
   'ɨ': { height: 'close', frontness: 'central', rounded: false },
@@ -99,7 +140,7 @@ const featureMap = {
   'ɵ': { height: 'close-mid', frontness: 'central', rounded: true },
   'ɤ': { height: 'close-mid', frontness: 'back', rounded: false },
   'o': { height: 'close-mid', frontness: 'back', rounded: true },
-  'ə': { height: 'mid', frontness: 'central', rounded: false }, //schwa
+  'ə': { height: 'mid', frontness: 'central', rounded: false },
   'ɛ': { height: 'open-mid', frontness: 'front', rounded: false },
   'œ': { height: 'open-mid', frontness: 'front', rounded: true },
   'ɜ': { height: 'open-mid', frontness: 'central', rounded: false },
@@ -111,9 +152,8 @@ const featureMap = {
   'a': { height: 'open', frontness: 'front', rounded: false },
   'ɶ': { height: 'open', frontness: 'front', rounded: true },
   'ɑ': { height: 'open', frontness: 'back', rounded: false },
-  'ɒ': { height: 'open', frontness: 'back', rounded: true },
+  'ɒ': { height: 'open', frontness: 'back', rounded: true }
 };
-
 
 const vowels = [
   "i", "y", "ɨ", "ʉ", "ɯ", "u",
@@ -126,6 +166,7 @@ const vowels = [
 ];
 
 const consonants = [
+  // Pulmonic consonants (all places and manners)
   "p", "b", "t", "d", "ʈ", "ɖ", "c", "ɟ", "k", "g", "q", "ɢ", "ʡ", "ʔ",
   "m", "ɱ", "n", "ɳ", "ɲ", "ŋ", "ɴ",
   "ʙ", "r", "ʀ",
@@ -133,11 +174,25 @@ const consonants = [
   "ɸ", "β", "f", "v", "θ", "ð", "s", "z", "ʃ", "ʒ", "ʂ", "ʐ", "ç", "ʝ", "x", "ɣ", "χ", "ʁ", "ħ", "ʕ", "h", "ɦ",
   "ɬ", "ɮ",
   "ʋ", "ɹ", "ɻ", "j", "ɰ",
-  "l", "ɭ", "ʎ", "ʟ"
+  "l", "ɭ", "ʎ", "ʟ",
+  // Implosives
+  "ɓ", "ɗ", "ʄ", "ɠ", "ʛ",
+  // Clicks (basic forms)
+  "ʘ", "ǀ", "ǃ", "ǂ", "ǁ",
+  // Voiced clicks
+  "ɡʘ", "ɡǀ", "ɡǃ", "ɡǂ", "ɡǁ",
+  // Nasal clicks
+  "ŋʘ", "ŋǀ", "ŋǃ", "ŋǂ", "ŋǁ"
 ];
 
 const affricates = [
-  "t͡s", "d͡z", "t͡ʃ", "d͡ʒ", "ʈ͡ʂ", "ɖ͡ʐ", "c͡ç", "ɟ͡ʝ", "k͡x", "g͡ɣ"
+  "t͡s", "d͡z",
+  "t͡ɕ", "d͡ʑ",
+  "t͡ʃ", "d͡ʒ",
+  "ʈ͡ʂ", "ɖ͡ʐ",
+  "c͡ç", "ɟ͡ʝ",
+  "k͡x", "g͡ɣ",
+  "q͡χ", "ɢ͡ʁ"
 ];
 
 const ipaFeatures = {
