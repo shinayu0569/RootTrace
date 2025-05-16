@@ -146,6 +146,29 @@ const ipaFeatures = {
   affricates
 };
 
+const soundChanges = {
+  lenition: [
+    { from: "p", to: "b", environment: "V_V" }, // Intervocalic voicing
+    { from: "t", to: "d", environment: "V_V" },
+    { from: "k", to: "g", environment: "V_V" },
+    { from: "s", to: "z", environment: "V_V" },
+    // More lenition rules
+  ],
+  
+  palatalization: [
+    { from: "k", to: "tʃ", environment: "_i" }, // Palatalization before front vowels
+    { from: "g", to: "dʒ", environment: "_i" },
+    { from: "t", to: "tʃ", environment: "_i" },
+    // More palatalization rules
+  ],
+  
+  vowelHarmony: {
+    frontBack: true,
+    rounding: true,
+    height: false
+  }
+};
+
 // ========== Utility Functions ==========
 function splitGroups(input) {
   return input.trim().split(/\n+/).map(g => g.trim().split(/\s+/));
@@ -173,6 +196,252 @@ function tokenizeIPA(word) {
     }
   }
   return result;
+}
+
+function detectSoundChanges(group) {
+  // Identify potential sound changes that might have happened
+  // This can help determine which forms are innovations vs. retentions
+  let changes = [];
+  
+  // Implementation would involve comparing cognate sets and finding patterns
+  // This is a simplified version
+  for (let i = 0; i < group.length; i++) {
+    for (let j = i + 1; j < group.length; j++) {
+      const word1 = tokenizeIPA(group[i]);
+      const word2 = tokenizeIPA(group[j]);
+      
+      // Compare phonemes at each position
+      const minLength = Math.min(word1.length, word2.length);
+      for (let k = 0; k < minLength; k++) {
+        if (word1[k] !== word2[k]) {
+          // Potential sound change
+          changes.push({
+            from: word1[k],
+            to: word2[k],
+            position: k,
+            context: getPhoneticContext(word1, k)
+          });
+        }
+      }
+    }
+  }
+  
+  return changes;
+}
+
+function weightedReconstruction(group) {
+  // First get the basic reconstruction candidates
+  const phonemeLists = group.map(tokenizeIPA);
+  const maxLen = Math.max(...phonemeLists.map(x => x.length));
+  let candidates = [];
+
+  for (let i = 0; i < maxLen; i++) {
+    const column = phonemeLists.map(p => p[i]).filter(Boolean);
+    if (column.length === 0) continue;
+    
+    // Calculate the likelihood of each phoneme being the proto-form
+    let scores = {};
+    for (let p of column) {
+      scores[p] = 0;
+      
+      // Check if this could be the result of a common sound change
+      for (let otherP of column) {
+        if (p === otherP) continue;
+        
+        // Check if this is a known sound change
+        if (isKnownSoundChange(p, otherP)) {
+          // Give higher score to the form that would be the source
+          scores[p] += 2; 
+        }
+        
+        // Give higher scores to phonemes that are typologically more common in proto-languages
+        scores[p] += getTypologicalFrequency(p);
+        
+        // Consider phoneme stability (some phonemes change less often)
+        scores[p] += getPhonemeStability(p);
+      }
+    }
+    
+    // Sort by score and keep the top candidates
+    const rankedCandidates = Object.entries(scores)
+      .sort((a, b) => b[1] - a[1])
+      .map(entry => entry[0]);
+      
+    candidates.push(rankedCandidates.slice(0, 3)); // Keep top 3 candidates
+  }
+
+  return combineCandidates(candidates);
+}
+
+function isKnownSoundChange(source, result) {
+  // Check common sound changes like:
+  // - Lenition (p > b, t > d, etc.)
+  // - Palatalization (k > tʃ before front vowels)
+  // - Spirantization (p > f, t > θ, etc.)
+  // - Vowel raising/lowering
+  
+  // Simplified example
+  const commonChanges = {
+    "p": ["b", "f", "v"],
+    "t": ["d", "θ", "s"],
+    "k": ["g", "x", "tʃ"],
+    "s": ["z", "ʃ", "h"],
+    "i": ["e", "ɪ", "j"],
+    "u": ["o", "ʊ", "w"]
+  };
+  
+  return commonChanges[source]?.includes(result) || false;
+}
+
+function getTypologicalFrequency(phoneme) {
+  // Simplified frequency data based on UPSID and other databases
+  const frequencies = {
+    "m": 0.94, "k": 0.89, "j": 0.84, "i": 0.92, "a": 0.88, "u": 0.88,
+    "p": 0.83, "w": 0.76, "n": 0.73, "s": 0.83, "h": 0.73, "t": 0.98,
+    // Add more frequencies
+  };
+  
+  return frequencies[phoneme] || 0.5; // Default medium frequency
+}
+
+function getPhonemeStability(phoneme) {
+  // Some phonemes are more resistant to change
+  const stability = {
+    "m": 0.9, "n": 0.85, "k": 0.8, "p": 0.8, "t": 0.8,
+    "i": 0.85, "a": 0.9, "u": 0.85,
+    // More stability values
+  };
+  
+  return stability[phoneme] || 0.5;
+}
+
+function findCorrespondences(groups) {
+  let correspondences = {};
+  
+  groups.forEach(group => {
+    const tokenizedWords = group.map(tokenizeIPA);
+    const maxLen = Math.max(...tokenizedWords.map(w => w.length));
+    
+    for (let i = 0; i < maxLen; i++) {
+      const column = tokenizedWords.map(w => w[i] || "_").filter(p => p !== "_");
+      if (column.length < 2) continue;
+      
+      // Create a correspondence set
+      const key = column.join(":");
+      if (!correspondences[key]) {
+        correspondences[key] = {
+          phonemes: column,
+          count: 1,
+          positions: [i]
+        };
+      } else {
+        correspondences[key].count++;
+        correspondences[key].positions.push(i);
+      }
+    }
+  });
+  
+  return correspondences;
+}
+
+function applyCorrespondences(correspondences, group) {
+  // For each position in the group, check if a correspondence set exists
+  // If so, prefer the proto-phoneme inferred from previous data
+  const tokenizedWords = group.map(tokenizeIPA);
+  const maxLen = Math.max(...tokenizedWords.map(w => w.length));
+  let protoForm = [];
+
+  for (let i = 0; i < maxLen; i++) {
+    const column = tokenizedWords.map(w => w[i] || "_").filter(p => p !== "_");
+    if (column.length < 2) {
+      protoForm.push(column[0] || "");
+      continue;
+    }
+    const key = column.join(":");
+    if (correspondences[key] && correspondences[key].proto) {
+      protoForm.push(correspondences[key].proto);
+    } else {
+      // fallback: majority vote
+      let counts = {};
+      for (let p of column) counts[p] = (counts[p] || 0) + 1;
+      const maxFreq = Math.max(...Object.values(counts));
+      const top = Object.entries(counts).filter(([k, v]) => v === maxFreq)[0][0];
+      protoForm.push(top);
+    }
+  }
+  return protoForm.join("");
+}
+
+function detectMorphology(groups) {
+  // Look for recurring patterns that might indicate morphemes
+  const possibleAffixes = findRecurringPatterns(groups);
+  
+  return {
+    possibleRoots: [],
+    possiblePrefixes: possibleAffixes.filter(a => a.position === "start"),
+    possibleSuffixes: possibleAffixes.filter(a => a.position === "end")
+  };
+}
+
+function findRecurringPatterns(groups) {
+  // Flatten all words in all groups
+  const allWords = groups.flat();
+  const minLength = 3; // Minimum length for a pattern to be considered
+  let prefixCounts = {};
+  let suffixCounts = {};
+
+  // Count prefixes and suffixes
+  allWords.forEach(word => {
+    // Tokenize to phonemes for more accurate pattern finding
+    const tokens = tokenizeIPA(word);
+    // Check prefixes
+    for (let len = 1; len <= Math.min(3, tokens.length); len++) {
+      const prefix = tokens.slice(0, len).join("");
+      prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+    }
+    // Check suffixes
+    for (let len = 1; len <= Math.min(3, tokens.length); len++) {
+      const suffix = tokens.slice(-len).join("");
+      suffixCounts[suffix] = (suffixCounts[suffix] || 0) + 1;
+    }
+  });
+
+  // Find recurring prefixes
+  const possiblePrefixes = Object.entries(prefixCounts)
+    .filter(([pat, count]) => count > 1 && pat.length >= minLength)
+    .map(([pat]) => ({ pattern: pat, position: "start" }));
+
+  // Find recurring suffixes
+  const possibleSuffixes = Object.entries(suffixCounts)
+    .filter(([pat, count]) => count > 1 && pat.length >= minLength)
+    .map(([pat]) => ({ pattern: pat, position: "end" }));
+
+  // Optionally, look for recurring infixes or roots (not implemented here)
+
+  return [...possiblePrefixes, ...possibleSuffixes];
+}
+
+function applySyllableConstraints(candidates) {
+  const syllablePatterns = {
+    onsets: ["p", "t", "k", "b", "d", "g", "f", "s", "m", "n", "l", "r", "w", "j"],
+    codas: ["p", "t", "k", "m", "n", "l", "r", "s"],
+    clusters: {
+      onset: ["pr", "tr", "kr", "pl", "kl", "sp", "st", "sk"],
+      coda: ["mp", "nt", "ŋk", "lt", "rt", "st"]
+    },
+    // More syllable structure constraints
+  };
+  
+  return candidates.filter(candidate => {
+    const syllables = syllabify(candidate) || [candidate];
+    
+    // Check if syllables follow the constraints
+    return syllables.every(syll => {
+      // Analyze onset and coda
+      // Return true if valid, false if invalid
+      return true; // Simplified implementation
+    });
+  });
 }
 
 function reconstructProto(group) {
@@ -261,6 +530,16 @@ function editDistance(a, b) {
 
 
 // ========== Integration ==========
+function getSettingsFromUI() {
+  return {
+    considerSyllabification: document.getElementById("consider-syllabification").checked,
+    considerStress: document.getElementById("consider-stress").checked,
+    multiCharPhonemes: document.getElementById("multi-char-phonemes").checked,
+    usePhoneticFeatures: document.getElementById("use-phonetic-features").checked
+  };
+}
+
+
 function processInput(inputText) {
   const groups = splitGroups(inputText);
   return groups.map(group => {
