@@ -114,29 +114,6 @@ const featureMap = {
   'ɒ': { height: 'open', frontness: 'back', rounded: true },
 };
 
-const soundChangeProbabilities = {
-  // Probability of certain sound changes based on typological patterns
-  lenition: {
-    'p': { 'b': 0.3, 'f': 0.4, 'v': 0.2, 'w': 0.1 },
-    't': { 'd': 0.3, 's': 0.3, 'θ': 0.2, 'r': 0.1, 'ɾ': 0.1 },
-    'k': { 'g': 0.3, 'x': 0.4, 'ɣ': 0.2, 'h': 0.1 },
-    // more to be added
-  },
-  
-  // How vowels tend to change
-  vowelShifts: {
-    'a': { 'æ': 0.2, 'ɑ': 0.3, 'ə': 0.2, 'ɛ': 0.1 },
-    'i': { 'e': 0.3, 'ɪ': 0.4, 'j': 0.1 },
-    'u': { 'o': 0.3, 'ʊ': 0.4, 'w': 0.1 },
-    // more to be added
-  },
-  
-  // Common assimilation patterns
-  assimilation: {
-    nasal: { before: 'stop', becomes: 'homorganic' },
-    // more to be added
-  }
-};
 
 const vowels = [
   "i", "y", "ɨ", "ʉ", "ɯ", "u",
@@ -205,58 +182,16 @@ function reconstructProto(group) {
 
   for (let i = 0; i < maxLen; i++) {
     const column = phonemeLists.map(p => p[i]).filter(Boolean);
-    if (column.length === 0) continue;
-    
-    // Determine position context
-    const position = i === 0 ? "initial" : (i === maxLen - 1 ? "final" : "medial");
-    
-    // Basic frequency analysis
     let counts = {};
     for (let p of column) counts[p] = (counts[p] || 0) + 1;
-    
-    // Get all candidates, sorted by frequency
-    let possibleProtos = Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .map(entry => entry[0]);
-    
-    // If there's a clear majority, just use that
     const maxFreq = Math.max(...Object.values(counts));
-    const threshold = column.length * 0.7; // 70% agreement is strong evidence
-    
-    if (maxFreq >= threshold) {
-      candidates.push([possibleProtos[0]]);
-      continue;
-    }
-    
-    // Otherwise, score candidates by likelihood of being ancestral
-    possibleProtos = possibleProtos.map(phoneme => {
-      const frequency = counts[phoneme];
-      const protoScore = protoLikelihood(phoneme, position);
-      return { 
-        phoneme, 
-        score: frequency * 0.6 + protoScore * 0.4 // Weight frequency more than likelihood
-      };
-    })
-    .sort((a, b) => b.score - a.score)
-    .map(item => item.phoneme);
-    
-    // Take top 2 candidates at most to prevent combinatorial explosion
-    candidates.push(possibleProtos.slice(0, 2));
+    const topCandidates = Object.entries(counts).filter(([k, v]) => v === maxFreq);
+    candidates.push(topCandidates.map(x => x[0]));
   }
 
-  // Get the stress positions
   const stresses = group.map(extractStress).filter(v => v !== null);
   const stressPos = stresses.length ? mode(stresses) : null;
-  
-  // Generate all possible reconstructions
-  let reconstructedForms = combineCandidates(candidates);
-  
-  // Filter out phonotactically implausible forms
-  reconstructedForms = reconstructedForms.filter(checkPhonotoactic).sort((a, b) => naturalnessPenalty(a) - naturalnessPenalty(b));
-  
-  // Limit number of reconstructions to prevent excessive outputs
-  reconstructedForms = reconstructedForms.slice(0, 5);
-  
+  const reconstructedForms = combineCandidates(candidates);
   return reconstructedForms.map(form => applyStress(form, stressPos));
 }
 
@@ -296,47 +231,12 @@ function highlightConservative(group, protoCandidates) {
 function phonemeDistance(a, b) {
   if (a === b) return 0;
   const f1 = featureMap[a], f2 = featureMap[b];
-  if (!f1 || !f2) return 3; // Higher penalty for unknown phonemes
-  
+  if (!f1 || !f2) return 2; // unknown phoneme, max penalty
+
   let score = 0;
-  
-  // Handle vowels and consonants separately
-  if (vowels.includes(a) && vowels.includes(b)) {
-    // Vowel comparison
-    if (f1.height !== f2.height) {
-      const heightOrder = ['close', 'near-close', 'close-mid', 'mid', 'open-mid', 'near-open', 'open'];
-      const heightDiff = Math.abs(heightOrder.indexOf(f1.height) - heightOrder.indexOf(f2.height));
-      score += heightDiff * 0.3;
-    }
-    
-    if (f1.frontness !== f2.frontness) {
-      const frontOrder = ['front', 'central', 'back'];
-      const frontDiff = Math.abs(frontOrder.indexOf(f1.frontness) - frontOrder.indexOf(f2.frontness));
-      score += frontDiff * 0.3;
-    }
-    
-    if (f1.rounded !== f2.rounded) score += 0.5;
-    
-  } else if (consonants.includes(a) && consonants.includes(b) || 
-             affricates.includes(a) && affricates.includes(b)) {
-    // Consonant comparison            
-    if (f1.place !== f2.place) {
-      const placeDistance = Math.abs(placeOrder.indexOf(f1.place) - placeOrder.indexOf(f2.place));
-      score += Math.min(placeDistance * 0.3, 1); // Cap at 1
-    }
-    
-    if (f1.manner !== f2.manner) {
-      const mannerOrder = ['stop', 'affricate', 'fricative', 'nasal', 'trill', 'tap', 'lateral approximant', 'approximant'];
-      const mannerDistance = Math.abs(mannerOrder.indexOf(f1.manner) - mannerOrder.indexOf(f2.manner));
-      score += Math.min(mannerDistance * 0.3, 1); // Cap at 1
-    }
-    
-    if (f1.voice !== f2.voice) score += 0.5;
-  } else {
-    // Comparing across consonant/vowel boundary
-    return 3; // Maximum difference
-  }
-  
+  if (f1.place !== f2.place) score++;
+  if (f1.manner !== f2.manner) score++;
+  if (f1.voice !== f2.voice) score++;
   return score;
 }
 
@@ -359,173 +259,15 @@ function editDistance(a, b) {
   return dp[a.length][b.length];
 }
 
-// Check if phoneme is a consonant
-function isConsonant(phoneme) {
-  return consonants.includes(phoneme) || affricates.includes(phoneme);
-}
-
-// Get sonority value of a phoneme
-function getSonority(phoneme) {
-  if (vowels.includes(phoneme)) return sonorityScale.vowel;
-  const manner = featureMap[phoneme]?.manner;
-  return manner ? sonorityScale[manner] || 0 : 0;
-}
-
-// Check if a sequence of phonemes follows phonotactic constraints
-function checkPhonotoactic(form) {
-  const phonemes = tokenizeIPA(form);
-  
-  // Track consonant clusters
-  let consonantCluster = [];
-  let previousWasConsonant = false;
-  
-  for (let i = 0; i < phonemes.length; i++) {
-    const current = phonemes[i];
-    const isCurrentConsonant = isConsonant(current);
-    
-    // Build consonant clusters
-    if (isCurrentConsonant) {
-      consonantCluster.push(current);
-      if (i === phonemes.length - 1 && consonantCluster.length > 3) {
-        // Excessively complex coda
-        return false;
-      }
-    } else if (previousWasConsonant) {
-      // End of consonant cluster, check for constraints
-      if (consonantCluster.length > 3) {
-        // Most languages don't have clusters longer than 3 consonants
-        return false;
-      }
-      
-      // Check sonority sequencing for onset clusters
-      if (consonantCluster.length > 1 && i - consonantCluster.length === 0) {
-        // This was a word-initial cluster
-        for (let j = 1; j < consonantCluster.length; j++) {
-          if (getSonority(consonantCluster[j]) <= getSonority(consonantCluster[j-1])) {
-            // Sonority should rise in onsets
-            return false;
-          }
-        }
-      }
-      
-      consonantCluster = [];
-    }
-    
-    // No vowel found check
-    if (i === phonemes.length - 1 && !phonemes.some(p => vowels.includes(p))) {
-      // Words should have at least one vowel or syllabic consonant
-      return false;
-    }
-    
-    previousWasConsonant = isCurrentConsonant;
-  }
-  
-  return true;
-}
-
-// Estimate naturalness score for a reconstructed form
-function naturalnessPenalty(form) {
-  const phonemes = tokenizeIPA(form);
-  let score = 0;
-  
-  // Excessive length penalty
-  if (phonemes.length > 10) score += (phonemes.length - 10) * 0.5;
-  
-  // Check for vowel harmony patterns
-  const formVowels = phonemes.filter(p => vowels.includes(p));
-  if (formVowels.length >= 3) {
-    const frontCount = formVowels.filter(v => featureMap[v]?.frontness === 'front').length;
-    const backCount = formVowels.filter(v => featureMap[v]?.frontness === 'back').length;
-    
-    // Mixed front/back vowels are common but total dominance of one is suspicious
-    if (frontCount === formVowels.length || backCount === formVowels.length) {
-      score -= 0.5; // Bonus for consistent vowel harmony
-    }
-  }
-  
-  // Check for common phoneme inventory characteristics
-  const inventory = new Set(phonemes);
-  const consonantCount = [...inventory].filter(p => isConsonant(p)).length;
-  const vowelCount = [...inventory].filter(p => vowels.includes(p)).length;
-  
-  // Most languages have a consonant/vowel ratio between 2:1 and 4:1
-  const ratio = consonantCount / (vowelCount || 1);
-  if (ratio < 1 || ratio > 6) score += 1;
-  
-  return score;
-}
-
-// Assess likelihood of being the proto-form
-function protoLikelihood(phoneme, position) {
-  if (!featureMap[phoneme]) return 0;
-  
-  let score = 1;
-  const features = featureMap[phoneme];
-  
-  // Consonant stability factors
-  if (consonants.includes(phoneme)) {
-    if (features.manner === 'stop') {
-      if (position === 'initial') score += 0.5; // Stops are stable word-initially
-      
-      // Velar and alveolar places are common in proto-languages
-      if (features.place === 'velar' || features.place === 'alveolar') score += 0.3;
-      
-      // Voiced stops often derive from voiceless ones
-      if (features.voice === 'voiceless') score += 0.2;
-    }
-    
-    // Fricatives are often derived from stops
-    if (features.manner === 'fricative') score -= 0.1;
-    
-    // Affricates are often derived from stops
-    if (features.manner === 'affricate') score -= 0.2;
-  }
-  
-  // Vowel factors
-  if (vowels.includes(phoneme)) {
-    // Basic 5-vowel system is most stable cross-linguistically
-    if (['a', 'e', 'i', 'o', 'u'].includes(phoneme)) score += 0.3;
-    
-    // Mid vowels often derive from high/low through neutralization
-    if (features.height === 'close-mid' || features.height === 'open-mid') score -= 0.1;
-    
-    // Central and rounded vowels are often derived
-    if (features.frontness === 'central') score -= 0.2;
-  }
-  
-  return score;
-}
 
 // ========== Integration ==========
-function processInput(inputText, settings = {}) {
+function processInput(inputText) {
   const groups = splitGroups(inputText);
   return groups.map(group => {
-    // Skip empty groups
-    if (group.length === 0 || (group.length === 1 && group[0] === '')) {
-      return { reconstructions: [], conservative: '', group: [] };
-    }
-    
     const recon = reconstructProto(group);
-    
-    // Handle case where no valid reconstructions were found
-    if (recon.length === 0) {
-      return { 
-        reconstructions: ["[No valid reconstruction found]"], 
-        mostPlausible: "[No valid reconstruction found]",
-        conservative: "[No valid reconstruction found]",
-        group 
-      };
-    }
-    
-    // The first is now the most plausible based on naturalness
-    const mostPlausible = recon[0];
-    
-    // Most conservative is closest to daughter languages
     const conservative = highlightConservative(group, recon);
-    
     return {
       reconstructions: recon,
-      mostPlausible,
       conservative,
       group
     };
@@ -539,65 +281,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
   button.addEventListener("click", () => {
     const inputText = inputField.value;
-    
-    // Get settings from checkboxes
-    const settings = {
-      considerSyllabification: document.getElementById("consider-syllabification")?.checked ?? true,
-      considerStress: document.getElementById("consider-stress")?.checked ?? true,
-      multiCharPhonemes: document.getElementById("multi-char-phonemes")?.checked ?? true,
-      usePhoneticFeatures: document.getElementById("use-phonetic-features")?.checked ?? true
-    };
-    
-    const results = processInput(inputText, settings);
+    const results = processInput(inputText);
     outputDiv.innerHTML = "";
 
-    if (results.length === 0) {
-      outputDiv.innerHTML = "<p>No valid input found. Please enter words in IPA.</p>";
-      return;
-    }
-
     results.forEach((res, index) => {
-      if (res.group.length === 0) return;
-      
-      const groupDiv = document.createElement("div");
-      groupDiv.className = "result-group";
-      
-      // Group title and input words
-      const groupTitle = document.createElement("h3");
-      groupTitle.textContent = `Group ${index + 1}: ${res.group.join(", ")}`;
-      groupDiv.appendChild(groupTitle);
-      
-      // Most plausible reconstruction
-      const bestRecon = document.createElement("p");
-      bestRecon.innerHTML = `<strong>Most plausible proto-form:</strong> <code>${res.mostPlausible}</code>`;
-      groupDiv.appendChild(bestRecon);
-      
-      // Conservative form if different from most plausible
-      if (res.conservative !== res.mostPlausible) {
-        const conservativeEl = document.createElement("p");
-        conservativeEl.innerHTML = `<strong>Most conservative form:</strong> <code>${res.conservative}</code>`;
-        groupDiv.appendChild(conservativeEl);
-      }
-      
-      // Show alternative reconstructions if any
-      if (res.reconstructions.length > 1) {
-        const alternatives = document.createElement("details");
-        const summary = document.createElement("summary");
-        summary.textContent = "Alternative reconstructions";
-        alternatives.appendChild(summary);
-        
-        const ul = document.createElement("ul");
-        res.reconstructions.slice(1).forEach(form => {
-          const li = document.createElement("li");
-          li.innerHTML = `<code>${form}</code>`;
-          ul.appendChild(li);
-        });
-        
-        alternatives.appendChild(ul);
-        groupDiv.appendChild(alternatives);
-      }
-      
-      outputDiv.appendChild(groupDiv);
+      const groupTitle = document.createElement("strong");
+      groupTitle.textContent = `Group ${index + 1}`;
+      outputDiv.appendChild(groupTitle);
+
+      const ul = document.createElement("ul");
+      res.reconstructions.forEach(form => {
+        const li = document.createElement("li");
+        li.textContent = form + (form === res.conservative ? " (most conservative)" : "");
+        ul.appendChild(li);
+      });
+      outputDiv.appendChild(ul);
     });
   });
 });
