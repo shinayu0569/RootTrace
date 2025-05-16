@@ -207,21 +207,97 @@ const soundChanges = {
     { from: "t", to: "d", environment: "V_V" },
     { from: "k", to: "g", environment: "V_V" },
     { from: "s", to: "z", environment: "V_V" },
+    { from: "b", to: "β", environment: "V_V" }, // Spirantization
+    { from: "d", to: "ð", environment: "V_V" },
+    { from: "g", to: "ɣ", environment: "V_V" },
+    { from: "v", to: "β", environment: "V_V" },
+    { from: "z", to: "ʒ", environment: "V_V" },
+    { from: "ʒ", to: "j", environment: "V_V" }, // Further lenition
+    { from: "d", to: "r", environment: "V_V" }, // Rhoticization
+    { from: "t", to: "ɾ", environment: "V_V" }, // Tap
+    { from: "k", to: "x", environment: "V_V" }, // Spirantization
+    { from: "g", to: "ɰ", environment: "V_V" }, // Approximant
     // More lenition rules
   ],
-  
+
+  fortition: [
+    { from: "β", to: "b", environment: "#_" }, // Word-initial strengthening
+    { from: "ð", to: "d", environment: "#_" },
+    { from: "ɣ", to: "g", environment: "#_" },
+    { from: "ɾ", to: "t", environment: "#_" },
+    { from: "j", to: "dʒ", environment: "#_" },
+    // More fortition rules
+  ],
+
   palatalization: [
     { from: "k", to: "tʃ", environment: "_i" }, // Palatalization before front vowels
+    { from: "k", to: "c", environment: "_j" },
     { from: "g", to: "dʒ", environment: "_i" },
+    { from: "g", to: "ɟ", environment: "_j" },
     { from: "t", to: "tʃ", environment: "_i" },
+    { from: "d", to: "dʒ", environment: "_i" },
+    { from: "n", to: "ɲ", environment: "_i" },
+    { from: "s", to: "ʃ", environment: "_i" },
+    { from: "l", to: "ʎ", environment: "_i" },
     // More palatalization rules
   ],
-  
+
+  depalatalization: [
+    { from: "tʃ", to: "t", environment: "_a" }, // Before back vowels
+    { from: "dʒ", to: "d", environment: "_a" },
+    { from: "ʃ", to: "s", environment: "_a" },
+    { from: "ʎ", to: "l", environment: "_a" },
+    // More depalatalization rules
+  ],
+
+  assimilation: [
+    { from: "n", to: "m", environment: "_p" }, // Place assimilation
+    { from: "n", to: "ŋ", environment: "_k" },
+    { from: "n", to: "ɲ", environment: "_j" },
+    { from: "s", to: "ʃ", environment: "_ʃ" }, // Regressive
+    { from: "d", to: "t", environment: "_t" }, // Voicing assimilation
+    // More assimilation rules
+  ],
+
+  dissimilation: [
+    { from: "r", to: "l", environment: "r_r" }, // Liquid dissimilation
+    { from: "n", to: "l", environment: "n_n" },
+    // More dissimilation rules
+  ],
+
+  metathesis: [
+    { from: "CV", to: "VC", environment: "" }, // General metathesis
+    // More metathesis rules
+  ],
+
+  epenthesis: [
+    { from: "", to: "ə", environment: "C_C" }, // Schwa insertion
+    { from: "", to: "t", environment: "s_s" }, // Stop insertion
+    // More epenthesis rules
+  ],
+
+  deletion: [
+    { from: "t", to: "", environment: "_#" }, // Word-final stop deletion
+    { from: "ə", to: "", environment: "V_V" }, // Syncope
+    { from: "n", to: "", environment: "_s" }, // Cluster simplification
+    // More deletion rules
+  ],
+
   vowelHarmony: {
     frontBack: true,
     rounding: true,
     height: false
-  }
+  },
+
+  vowelChanges: [
+    { from: "i", to: "e", environment: "" }, // Lowering
+    { from: "e", to: "i", environment: "" }, // Raising
+    { from: "a", to: "æ", environment: "" }, // Fronting
+    { from: "u", to: "o", environment: "" }, // Lowering
+    { from: "o", to: "u", environment: "" }, // Raising
+    { from: "a", to: "ə", environment: "V_V" }, // Reduction
+    // More vowel changes
+  ]
 };
 
 // ========== Utility Functions ==========
@@ -329,23 +405,110 @@ function weightedReconstruction(group) {
 }
 
 function isKnownSoundChange(source, result) {
-  // Check common sound changes like:
-  // - Lenition (p > b, t > d, etc.)
-  // - Palatalization (k > tʃ before front vowels)
-  // - Spirantization (p > f, t > θ, etc.)
-  // - Vowel raising/lowering
-  
-  // Simplified example
+  // Expanded list of common sound changes, including more manners, places, and vowels
   const commonChanges = {
-    "p": ["b", "f", "v"],
-    "t": ["d", "θ", "s"],
-    "k": ["g", "x", "tʃ"],
-    "s": ["z", "ʃ", "h"],
-    "i": ["e", "ɪ", "j"],
-    "u": ["o", "ʊ", "w"]
+    // Lenition and voicing
+    "p": ["b", "β", "f", "v", "ɸ"],
+    "b": ["β", "v", "p"],
+    "t": ["d", "ð", "θ", "s", "ɾ", "ʃ", "ts", "tʃ"],
+    "d": ["ð", "z", "t", "ɾ", "ʒ", "dz", "dʒ"],
+    "k": ["g", "ɣ", "x", "c", "tʃ", "q", "ʔ"],
+    "g": ["ɣ", "x", "k", "ɰ", "ʁ"],
+    "f": ["v", "β", "ɸ"],
+    "v": ["β", "f"],
+    "s": ["z", "ʃ", "h", "θ"],
+    "z": ["ʒ", "s"],
+    "ʃ": ["ʒ", "s", "ç"],
+    "ʒ": ["ʃ", "z", "j"],
+    "θ": ["ð", "s"],
+    "ð": ["θ", "d", "z"],
+    "x": ["ɣ", "k", "h"],
+    "ɣ": ["x", "g", "ʁ"],
+    "h": ["ɦ", "x", "ʔ"],
+    "ɦ": ["h"],
+    "m": ["ɱ", "n"],
+    "n": ["ŋ", "ɲ", "m", "ɳ"],
+    "ŋ": ["n", "ɲ"],
+    "ɲ": ["n", "ŋ"],
+    "l": ["ɫ", "ʎ", "r"],
+    "r": ["ɾ", "l"],
+    "ɾ": ["r", "d", "t"],
+    "j": ["ʝ", "i"],
+    "w": ["v", "u"],
+
+    // Palatalization
+    "k": ["c", "tʃ", "t͡ɕ", "ɕ"],
+    "g": ["ɟ", "dʒ", "d͡ʑ", "ʑ"],
+    "t": ["tʃ", "t͡ɕ", "ʃ", "ɕ"],
+    "d": ["dʒ", "d͡ʑ", "ʒ", "ʑ"],
+    "n": ["ɲ"],
+    "l": ["ʎ"],
+
+    // Depalatalization
+    "tʃ": ["t", "ts", "ʃ", "s"],
+    "dʒ": ["d", "dz", "ʒ", "z"],
+    "ʃ": ["s", "tʃ"],
+    "ʒ": ["z", "dʒ"],
+    "ɲ": ["n"],
+    "ʎ": ["l"],
+
+    // Affrication
+    "t": ["ts", "tʃ"],
+    "d": ["dz", "dʒ"],
+    "s": ["ts"],
+    "z": ["dz"],
+
+    // Deaffrication
+    "ts": ["s", "t"],
+    "dz": ["z", "d"],
+    "tʃ": ["ʃ", "t"],
+    "dʒ": ["ʒ", "d"],
+
+    // Vowel raising/lowering
+    "i": ["ɪ", "e", "j"],
+    "ɪ": ["i", "e"],
+    "e": ["ɛ", "i", "ə"],
+    "ɛ": ["e", "æ", "a"],
+    "a": ["æ", "ɑ", "ə"],
+    "æ": ["a", "ɛ"],
+    "ɑ": ["a", "ɒ"],
+    "ɒ": ["ɑ", "ɔ"],
+    "u": ["ʊ", "o", "w"],
+    "ʊ": ["u", "o"],
+    "o": ["ɔ", "u", "ə"],
+    "ɔ": ["o", "ɒ"],
+    "ə": ["a", "e", "o"],
+
+    // Diphthongization/monophthongization (simplified)
+    "e": ["ei", "ie"],
+    "o": ["ou", "uo"],
+    "ai": ["e", "a"],
+    "au": ["o", "a"],
+
+    // Nasalization
+    "a": ["ã"],
+    "e": ["ẽ"],
+    "i": ["ĩ"],
+    "o": ["õ"],
+    "u": ["ũ"],
+
+    // Glottalization
+    "t": ["ʔ"],
+    "k": ["ʔ"],
+
+    // Miscellaneous
+    "ʔ": [""], // deletion
+    "h": [""], // deletion
+    "ə": [""], // syncope
+    "n": [""], // deletion in clusters
+    "t": [""], // word-final deletion
   };
-  
-  return commonChanges[source]?.includes(result) || false;
+
+  // Also allow for reverse direction (e.g., b > p)
+  if (commonChanges[source]?.includes(result)) return true;
+  // Check if the reverse is a known change (less common, but possible)
+  if (commonChanges[result]?.includes(source)) return true;
+  return false;
 }
 
 function getTypologicalFrequency(phoneme) {
@@ -583,6 +746,111 @@ function editDistance(a, b) {
   return dp[a.length][b.length];
 }
 
+function generateEvolutionDiagram(proto, descendants, intermediates = []) {
+  // Simple vertical tree: proto -> intermediates -> descendants
+  let lines = [];
+  lines.push(`  ${proto}`);
+  if (intermediates.length > 0) {
+    intermediates.forEach((inter, idx) => {
+      lines.push(`   |`);
+      lines.push(`  [${inter}]`);
+    });
+    lines.push(`   |`);
+  } else {
+    lines.push(`   |`);
+  }
+  // Draw branches to descendants
+  if (descendants.length === 1) {
+    lines.push(`  ${descendants[0]}`);
+  } else {
+    // Draw a fork
+    lines.push(`  |`);
+    for (let i = 0; i < descendants.length; i++) {
+      lines.push(`  +-- ${descendants[i]}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function generateEvolutionSVG(proto, descendants, intermediates = []) {
+  // Responsive SVG with dynamic spacing
+  const minWidth = 320;
+  const nodeWidth = 90;
+  const nodeHeight = 36;
+  const hPad = 30;
+  const vPad = 30;
+  const fontSize = 18;
+  const levels = 2 + intermediates.length;
+  const width = Math.max(minWidth, descendants.length * (nodeWidth + hPad) + hPad);
+  const height = (levels + 1) * (nodeHeight + vPad);
+
+  // Calculate positions
+  const nodes = [];
+  let y = vPad + nodeHeight / 2;
+  nodes.push({ text: proto, x: width / 2, y });
+
+  intermediates.forEach((inter, i) => {
+    y += nodeHeight + vPad;
+    nodes.push({ text: inter, x: width / 2, y });
+  });
+
+  y += nodeHeight + vPad;
+  const descY = y;
+  const descCount = descendants.length;
+  const descSpacing = descCount === 1 ? 0 : (width - 2 * hPad) / (descCount - 1);
+  descendants.forEach((desc, i) => {
+    const x = descCount === 1 ? width / 2 : hPad + i * descSpacing;
+    nodes.push({ text: desc, x, y: descY });
+  });
+
+  // SVG elements
+  let svg = `<svg viewBox="0 0 ${width} ${height}" width="100%" height="auto" class="evo-diagram">`;
+
+  // Draw lines
+  let prev = nodes[0];
+  for (let i = 1; i < nodes.length - descendants.length; i++) {
+    let curr = nodes[i];
+    svg += `<line x1="${prev.x}" y1="${prev.y + nodeHeight / 2}" x2="${curr.x}" y2="${curr.y - nodeHeight / 2}" stroke="#4a90e2" stroke-width="2"/>`;
+    prev = curr;
+  }
+  // Lines to descendants
+  const lastInter = nodes[nodes.length - descendants.length - 1];
+  descendants.forEach((desc, i) => {
+    const descNode = nodes[nodes.length - descendants.length + i];
+    svg += `<line x1="${lastInter.x}" y1="${lastInter.y + nodeHeight / 2}" x2="${descNode.x}" y2="${descNode.y - nodeHeight / 2}" stroke="#4a90e2" stroke-width="2"/>`;
+  });
+
+  // Draw nodes (rectangles and text)
+  nodes.forEach(node => {
+    svg += `<rect x="${node.x - nodeWidth / 2}" y="${node.y - nodeHeight / 2}" width="${nodeWidth}" height="${nodeHeight}" rx="10" fill="#f9f9f9" stroke="#4a90e2" stroke-width="1"/>`;
+    svg += `<text x="${node.x}" y="${node.y + fontSize/3}" text-anchor="middle" font-size="${fontSize}" fill="#333" font-family="Noto Sans, sans-serif">${node.text}</text>`;
+  });
+
+  svg += `</svg>`;
+  return svg;
+}
+
+function generateMermaidDiagram(proto, descendants, intermediates = []) {
+  let lines = ['flowchart TD'];
+  let prev = 'P0["' + proto + '"]';
+  let nodeCount = 1;
+
+  // Intermediates (optional)
+  intermediates.forEach((inter, i) => {
+    let node = `I${i}["${inter}"]`;
+    lines.push(`${prev} --> ${node}`);
+    prev = node;
+    nodeCount++;
+  });
+
+  // Descendants
+  descendants.forEach((desc, i) => {
+    let node = `D${i}["${desc}"]`;
+    lines.push(`${prev} --> ${node}`);
+  });
+
+  return lines.join('\n');
+}
 
 // ========== Integration ==========
 function getSettingsFromUI() {
@@ -630,6 +898,22 @@ document.addEventListener("DOMContentLoaded", () => {
         ul.appendChild(li);
       });
       outputDiv.appendChild(ul);
+
+      // Mermaid diagram
+      const mermaidCode = generateMermaidDiagram(
+        res.conservative,
+        res.group
+        // Coming soon, add intermediates to be implemented 
+      );
+      const diagramDiv = document.createElement("div");
+      diagramDiv.className = "mermaid";
+      diagramDiv.textContent = mermaidCode;
+      outputDiv.appendChild(diagramDiv);
     });
+
+    // After all diagrams are added:
+    if (window.mermaid) {
+      window.mermaid.run();
+    }
   });
 });
