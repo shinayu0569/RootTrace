@@ -899,21 +899,77 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       outputDiv.appendChild(ul);
 
-      // Mermaid diagram
-      const mermaidCode = generateMermaidDiagram(
-        res.conservative,
-        res.group
-        // Coming soon, add intermediates to be implemented 
-      );
+      // Guess intermediates and clusters
+      const { clusters, intermediates } = guessIntermediates(res.conservative, res.group);
+
+      // Flatten clusters for diagram (Mermaid supports only binary trees, so use a star or binary split)
+      let diagramCode = 'flowchart TD\n';
+      let protoNode = `P0["${res.conservative}"]`;
+      intermediates.forEach((inter, i) => {
+        let interNode = `I${i}["${inter}"]`;
+        diagramCode += `${protoNode} --> ${interNode}\n`;
+        clusters[i].forEach((desc, j) => {
+          let descNode = `D${i}_${j}["${desc}"]`;
+          diagramCode += `${interNode} --> ${descNode}\n`;
+        });
+      });
+
       const diagramDiv = document.createElement("div");
       diagramDiv.className = "mermaid";
-      diagramDiv.textContent = mermaidCode;
+      diagramDiv.textContent = diagramCode;
       outputDiv.appendChild(diagramDiv);
     });
-
     // After all diagrams are added:
     if (window.mermaid) {
       window.mermaid.run();
     }
   });
 });
+
+function clusterDescendants(descendants) {
+  // Compute pairwise distances
+  const distances = [];
+  for (let i = 0; i < descendants.length; i++) {
+    for (let j = i + 1; j < descendants.length; j++) {
+      distances.push({
+        pair: [i, j],
+        dist: editDistance(tokenizeIPA(descendants[i]), tokenizeIPA(descendants[j]))
+      });
+    }
+  }
+  // Agglomerative clustering (single-linkage, simple version)
+  let clusters = descendants.map((d, i) => [i]);
+  while (clusters.length > 2) { // Stop at 2 or 3 clusters for simplicity
+    // Find closest pair of clusters
+    let minDist = Infinity, minPair = null;
+    for (let i = 0; i < clusters.length; i++) {
+      for (let j = i + 1; j < clusters.length; j++) {
+        // Min distance between any members
+        let d = Math.min(...clusters[i].map(a => clusters[j].map(b =>
+          distances.find(e =>
+            (e.pair[0] === a && e.pair[1] === b) || (e.pair[1] === a && e.pair[0] === b)
+          )?.dist ?? Infinity
+        )).flat());
+        if (d < minDist) {
+          minDist = d;
+          minPair = [i, j];
+        }
+      }
+    }
+    // Merge closest clusters
+    if (minPair) {
+      clusters[minPair[0]] = clusters[minPair[0]].concat(clusters[minPair[1]]);
+      clusters.splice(minPair[1], 1);
+    } else {
+      break;
+    }
+  }
+  // Return clusters as arrays of descendant indices
+  return clusters.map(cluster => cluster.map(idx => descendants[idx]));
+}
+
+function guessIntermediates(proto, descendants) {
+  const clusters = clusterDescendants(descendants);
+  const intermediates = clusters.map(group => highlightConservative(group, reconstructProto(group)));
+  return { clusters, intermediates };
+}
