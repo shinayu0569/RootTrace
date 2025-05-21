@@ -114,8 +114,8 @@ function tokenizeIPA(word, options = {}) {
   return result;
 }
 
-function weightedReconstruction(group) {
-  const phonemeLists = group.map(tokenizeIPA);
+function weightedReconstruction(group, options = {}) {
+  const phonemeLists = group.map(word => tokenizeIPA(word, options));
   const maxLen = Math.max(...phonemeLists.map(x => x.length));
   let candidates = [];
   for (let i = 0; i < maxLen; i++) {
@@ -129,6 +129,12 @@ function weightedReconstruction(group) {
         if (isKnownSoundChange(p, otherP)) scores[p] += 2;
         scores[p] += getTypologicalFrequency(p) + getPhonemeStability(p);
       }
+      // --- Add random factor if enabled ---
+      if (options.enableRandomness) {
+        // Random value between -0.5 and +0.5, scaled by strength (0 to 1)
+        scores[p] += (Math.random() - 0.5) * 2 * (options.randomnessStrength || 0.2);
+      }
+      // --- End random factor ---
     }
     candidates.push(Object.entries(scores).sort((a, b) => b[1] - a[1]).map(e => e[0]).slice(0, 3));
   }
@@ -272,6 +278,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const inputField = document.getElementById("input-text");
   const button = document.getElementById("reconstruct-btn");
   const outputDiv = document.getElementById("output");
+  // --- Add slider display logic ---
+  const randomnessSlider = document.getElementById("randomness-strength");
+  const randomnessValue = document.getElementById("randomness-strength-value");
+  if (randomnessSlider && randomnessValue) {
+    randomnessSlider.addEventListener("input", () => {
+      randomnessValue.textContent = Number(randomnessSlider.value).toFixed(2);
+    });
+  }
+  // --- End slider display logic ---
   button.addEventListener("click", () => {
     // Read settings
     const considerSyllabification = document.getElementById("consider-syllabification").checked;
@@ -279,6 +294,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const multiCharPhonemes = document.getElementById("multi-char-phonemes").checked;
     const usePhoneticFeatures = document.getElementById("use-phonetic-features").checked;
     const method = document.getElementById("method-weighted").checked ? "weighted" : "majority";
+    const enableRandomness = document.getElementById("enable-randomness").checked;
+    const randomnessStrength = parseFloat(document.getElementById("randomness-strength").value);
     const inputText = inputField.value;
 
     // Pass settings as an options object
@@ -287,7 +304,9 @@ document.addEventListener("DOMContentLoaded", () => {
       considerStress,
       multiCharPhonemes,
       usePhoneticFeatures,
-      method
+      method,
+      enableRandomness,
+      randomnessStrength
     };
 
     const results = processInput(inputText, options);

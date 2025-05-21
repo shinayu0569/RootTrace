@@ -37,6 +37,18 @@
           Weighted (Feature-Based)
         </label>
       </fieldset>
+      <fieldset style="margin-top:1em;">
+        <legend><strong>Randomness (WIP)</strong></legend>
+        <label>
+          <input type="checkbox" id="enable-randomness">
+          Enable Random Factor
+        </label>
+        <label style="margin-left:1em;">
+          Strength:
+          <input type="range" id="randomness-strength" min="0" max="1" step="0.01" value="0.2" style="vertical-align:middle;">
+          <span id="randomness-strength-value">0.20</span>
+        </label>
+      </fieldset>
     </form>
   </section>
 
@@ -45,11 +57,10 @@
     <div id="output"></div>
   </section>
 
-  <script src="script.js"></script>
-  <script type="module">
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-  window.mermaid = mermaid;
-  mermaid.initialize({ startOnLoad: false });
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  window.mermaid.initialize({ startOnLoad: false });
 </script>
+<script src="script.js"></script>
 </body>
 </html>
