@@ -26,6 +26,17 @@
       <label><input type="checkbox" id="consider-stress" checked> Consider Primary Stress (ˈ)</label><br>
       <label><input type="checkbox" id="multi-char-phonemes" checked> Handle Multi-Character Phonemes (like [t͡ʃ])</label><br>
       <label><input type="checkbox" id="use-phonetic-features" checked> Compare using Phonetic Features (not spelling)</label><br>
+      <fieldset style="margin-top:1em;">
+        <legend><strong>Reconstruction Method</strong></legend>
+        <label>
+          <input type="radio" name="recon-method" id="method-majority" value="majority" checked>
+          Majority Vote
+        </label>
+        <label style="margin-left:1em;">
+          <input type="radio" name="recon-method" id="method-weighted" value="weighted">
+          Weighted (Feature-Based)
+        </label>
+      </fieldset>
     </form>
   </section>
 

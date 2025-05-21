@@ -99,10 +99,15 @@ const syllabify = word => word.includes(".") ? word.split(".") : null;
 const extractStress = word => word.includes("ˈ") ? word.indexOf("ˈ") : null;
 
 const allPhonemes = [...affricates, ...consonants, ...vowels].sort((a, b) => b.length - a.length);
-function tokenizeIPA(word) {
+function tokenizeIPA(word, options = {}) {
+  // Respect multiCharPhonemes setting
+  let phonemeList = options.multiCharPhonemes === false
+    ? [...consonants, ...vowels] // Only single-char
+    : allPhonemes; // Default: multi-char first
+
   let result = [], i = 0;
   while (i < word.length) {
-    let match = allPhonemes.find(p => word.startsWith(p, i));
+    let match = phonemeList.find(p => word.startsWith(p, i));
     if (match) { result.push(match); i += match.length; }
     else i++;
   }
@@ -249,10 +254,15 @@ function guessIntermediates(proto, descendants) {
   return { clusters, intermediates };
 }
 
-function processInput(inputText) {
+function processInput(inputText, options) {
   const groups = splitGroups(inputText);
   return groups.map(group => {
-    const recon = reconstructProto(group);
+    let recon;
+    if (options.method === "weighted") {
+      recon = weightedReconstruction(group, options);
+    } else {
+      recon = reconstructProto(group, options);
+    }
     const conservative = highlightConservative(group, recon);
     return { reconstructions: recon, conservative, group };
   });
@@ -263,20 +273,38 @@ document.addEventListener("DOMContentLoaded", () => {
   const button = document.getElementById("reconstruct-btn");
   const outputDiv = document.getElementById("output");
   button.addEventListener("click", () => {
+    // Read settings
+    const considerSyllabification = document.getElementById("consider-syllabification").checked;
+    const considerStress = document.getElementById("consider-stress").checked;
+    const multiCharPhonemes = document.getElementById("multi-char-phonemes").checked;
+    const usePhoneticFeatures = document.getElementById("use-phonetic-features").checked;
+    const method = document.getElementById("method-weighted").checked ? "weighted" : "majority";
     const inputText = inputField.value;
-    const results = processInput(inputText);
+
+    // Pass settings as an options object
+    const options = {
+      considerSyllabification,
+      considerStress,
+      multiCharPhonemes,
+      usePhoneticFeatures,
+      method
+    };
+
+    const results = processInput(inputText, options);
     outputDiv.innerHTML = "";
     results.forEach((res, index) => {
+      const groupDiv = document.createElement("div");
+      groupDiv.className = "result-group";
       const groupTitle = document.createElement("strong");
       groupTitle.textContent = `Group ${index + 1}`;
-      outputDiv.appendChild(groupTitle);
+      groupDiv.appendChild(groupTitle);
       const ul = document.createElement("ul");
       res.reconstructions.forEach(form => {
         const li = document.createElement("li");
         li.textContent = form + (form === res.conservative ? " (most conservative)" : "");
         ul.appendChild(li);
       });
-      outputDiv.appendChild(ul);
+      groupDiv.appendChild(ul);
       const { clusters, intermediates } = guessIntermediates(res.conservative, res.group);
       let diagramCode = 'flowchart TD\n';
       let protoNode = `P0["${res.conservative}"]`;
@@ -289,9 +317,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
       const diagramDiv = document.createElement("div");
-      diagramDiv.className = "mermaid";
+      diagramDiv.className = "mermaid evo-diagram";
       diagramDiv.textContent = diagramCode;
-      outputDiv.appendChild(diagramDiv);
+      groupDiv.appendChild(diagramDiv);
+      outputDiv.appendChild(groupDiv);
     });
     if (window.mermaid) window.mermaid.run();
   });
