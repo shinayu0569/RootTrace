@@ -1,0 +1,23 @@
+[
+  {
+    "from": "k",
+    "to": "tʃ",
+    "env": "_i",        // (optional) before "i", null for any environment
+    "except": null,     // (optional) e.g. "!_u" for not before "u", null for no exception
+    "chance": 0.80      // 0.01 to 0.99
+  },
+  {
+    "from": "a",
+    "to": "æ",
+    "env": null,
+    "except": null,
+    "chance": 0.20
+  },
+  {
+    "from": "n",
+    "to": "ŋ",
+    "env": "_k",
+    "except": "!_g",
+    "chance": 0.50
+  }
+]

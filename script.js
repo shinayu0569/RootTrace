@@ -323,18 +323,39 @@ function guessIntermediates(proto, descendants) {
 function processInput(inputText, options) {
   const groups = splitGroups(inputText);
   return groups.map(group => {
+    // Apply sound changes to each word in the group
+    const changedGroup = group.map(word => {
+      let tokens = tokenizeIPA(word, options);
+      tokens = applySoundChanges(tokens);
+      return tokens.join('');
+    });
+
     let recon;
     if (options.method === "weighted") {
-      recon = weightedReconstruction(group, options);
+      recon = weightedReconstruction(changedGroup, options);
     } else {
-      recon = reconstructProto(group, options);
+      recon = reconstructProto(changedGroup, options);
     }
-    const conservative = highlightConservative(group, recon);
-    return { reconstructions: recon, conservative, group };
+    const conservative = highlightConservative(changedGroup, recon);
+    return { reconstructions: recon, conservative, group: changedGroup };
   });
 }
 
+let soundChanges = [];
+
+async function loadSoundChanges() {
+  try {
+    const res = await fetch('sound-changes.json');
+    if (!res.ok) throw new Error('Failed to load sound-changes.json');
+    soundChanges = await res.json();
+  } catch (e) {
+    console.warn('Could not load sound changes:', e);
+    soundChanges = [];
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  loadSoundChanges();
   const inputField = document.getElementById("input-text");
   const button = document.getElementById("reconstruct-btn");
   const outputDiv = document.getElementById("output");
@@ -548,4 +569,37 @@ function parsePhonemeFeatures(token) {
     }
   }
   return features;
+}
+
+function applySoundChanges(phonemes) {
+  for (const rule of soundChanges) {
+    for (let i = 0; i < phonemes.length; i++) {
+      if (phonemes[i] === rule.from) {
+        // Check environment
+        let envOk = true;
+        if (rule.env) {
+          if (rule.env.startsWith('_')) {
+            // Before X
+            envOk = phonemes[i + 1] === rule.env.slice(1);
+          } else if (rule.env.endsWith('_')) {
+            // After X
+            envOk = phonemes[i - 1] === rule.env.slice(0, -1);
+          }
+        }
+        // Check exception
+        if (rule.except && envOk) {
+          if (rule.except.startsWith('!_')) {
+            if (phonemes[i + 1] === rule.except.slice(2)) envOk = false;
+          } else if (rule.except.endsWith('_!')) {
+            if (phonemes[i - 1] === rule.except.slice(0, -2)) envOk = false;
+          }
+        }
+        // Apply with chance
+        if (envOk && Math.random() < rule.chance) {
+          phonemes[i] = rule.to;
+        }
+      }
+    }
+  }
+  return phonemes;
 }
