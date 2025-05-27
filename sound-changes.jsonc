@@ -1,23 +1,79 @@
 [
   {
-    "from": "k",
-    "to": "tʃ",
-    "env": "_i",        // (optional) before "i", null for any environment
-    "except": null,     // (optional) e.g. "!_u" for not before "u", null for no exception
-    "chance": 0.80      // 0.01 to 0.99
+    "rule": "k > tʃ / _i (0.80)"
   },
   {
-    "from": "a",
-    "to": "æ",
-    "env": null,
-    "except": null,
-    "chance": 0.20
+    "rule": "a > æ (0.20)"
   },
   {
-    "from": "n",
-    "to": "ŋ",
-    "env": "_k",
-    "except": "!_g",
-    "chance": 0.50
+    "rule": "n > ŋ / _k ! _g (0.50)"
+  },
+  {
+    "rule": "t > ts / _i (0.60)"
+  },
+  {
+    "rule": "d > ð / _V (0.30)" // V = any vowel
+  },
+  {
+    "rule": "s > ʃ / _i (0.40)"
+  },
+  {
+    "rule": "p > f / _# (0.25)" // # = word boundary
+  },
+  {
+    "rule": "e > i / _C (0.15)" // C = any consonant
+  },
+  {
+    "rule": "o > u / _n (0.10)"
+  },
+  {
+    "rule": "g > ɣ / V_V (0.35)"
+  },
+  // Naturalistic shifts
+  {
+    "rule": "t > θ / _# (0.18)" // word-final t to θ
+  },
+  {
+    "rule": "b > v / V_V (0.22)" // intervocalic lenition
+  },
+  {
+    "rule": "m > ɱ / _f (0.12)" // before labiodental
+  },
+  {
+    "rule": "i > j / _V (0.08)" // glide formation
+  },
+  {
+    "rule": "u > w / _V (0.07)"
+  },
+  {
+    "rule": "r > ɾ / V_V (0.20)" // tap between vowels
+  },
+  {
+    "rule": "s > z / V_V (0.16)" // voicing between vowels
+  },
+  {
+    "rule": "a > ɑ / _# (0.09)" // backing word-finally
+  },
+  // Non-naturalistic shifts
+  {
+    "rule": "p > ʔ / _a (0.05)" // glottalization before a
+  },
+  {
+    "rule": "t > ʃ / _u (0.03)" // t to sh before u
+  },
+  {
+    "rule": "k > x / _e (0.04)" // k to x before e
+  },
+  {
+    "rule": "e > o / _s (0.02)" // vowel raising before s
+  },
+  {
+    "rule": "n > ɲ / _tʃ (0.01)" // n to palatal nasal before tʃ
+  },
+  {
+    "rule": "d > t / _# (0.02)" // devoicing word-finally
+  },
+  {
+    "rule": "f > p / _i (0.01)" // fortition before i
   }
 ]

@@ -347,9 +347,14 @@ async function loadSoundChanges() {
   try {
     const res = await fetch('sound-changes.json');
     if (!res.ok) throw new Error('Failed to load sound-changes.json');
-    soundChanges = await res.json();
+    const raw = await res.json();
+    window.algorithmSoundChanges = raw
+      .map(obj => obj.rule ? parseVulgarRule(obj.rule) : null)
+      .filter(Boolean);
+    soundChanges = window.algorithmSoundChanges;
   } catch (e) {
     console.warn('Could not load sound changes:', e);
+    window.algorithmSoundChanges = [];
     soundChanges = [];
   }
 }
@@ -579,19 +584,26 @@ function applySoundChanges(phonemes) {
         let envOk = true;
         if (rule.env) {
           if (rule.env.startsWith('_')) {
-            // Before X
             envOk = phonemes[i + 1] === rule.env.slice(1);
           } else if (rule.env.endsWith('_')) {
-            // After X
             envOk = phonemes[i - 1] === rule.env.slice(0, -1);
+          } else if (rule.env.includes('_')) {
+            // e.g. "a_b" means a before and b after
+            const [before, after] = rule.env.split('_');
+            envOk = (!before || phonemes[i - 1] === before) &&
+                    (!after || phonemes[i + 1] === after);
           }
         }
         // Check exception
         if (rule.except && envOk) {
-          if (rule.except.startsWith('!_')) {
-            if (phonemes[i + 1] === rule.except.slice(2)) envOk = false;
-          } else if (rule.except.endsWith('_!')) {
-            if (phonemes[i - 1] === rule.except.slice(0, -2)) envOk = false;
+          if (rule.except.startsWith('_')) {
+            if (phonemes[i + 1] === rule.except.slice(1)) envOk = false;
+          } else if (rule.except.endsWith('_')) {
+            if (phonemes[i - 1] === rule.except.slice(0, -1)) envOk = false;
+          } else if (rule.except.includes('_')) {
+            const [before, after] = rule.except.split('_');
+            if ((!before || phonemes[i - 1] === before) &&
+                (!after || phonemes[i + 1] === after)) envOk = false;
           }
         }
         // Apply with chance
@@ -602,4 +614,59 @@ function applySoundChanges(phonemes) {
     }
   }
   return phonemes;
+}
+
+function parseVulgarRule(ruleStr) {
+  // Example: "k > tʃ / _i ! _g (0.80)"
+  const main = ruleStr.match(/^(.+?)\s*>\s*(.+?)(?:\s*\/\s*([^!()]+)?)?(?:\s*!\s*([^()]+))?(?:\s*\(([\d.]+)\))?$/);
+  if (!main) return null;
+  const [, from, to, env, except, chance] = main.map(x => x && x.trim());
+  return {
+    from,
+    to,
+    env: env || null,
+    except: except || null,
+    chance: chance ? parseFloat(chance) : 1.0
+  };
+}
+
+const enableUserSoundChanges = document.getElementById("enable-user-sound-changes").checked;
+const userSoundChangesText = document.getElementById("user-sound-changes").value;
+const soundChangeOrder = document.querySelector('input[name="sound-change-order"]:checked').value;
+
+let userSoundChanges = [];
+if (enableUserSoundChanges && userSoundChangesText.trim()) {
+  userSoundChanges = userSoundChangesText
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('//'))
+    .map(parseVulgarRule)
+    .filter(Boolean);
+}
+
+if (enableUserSoundChanges) {
+  if (soundChangeOrder === "user-first") {
+    soundChanges = [...userSoundChanges, ...(window.algorithmSoundChanges || [])];
+  } else {
+    soundChanges = [...(window.algorithmSoundChanges || []), ...userSoundChanges];
+  }
+} else {
+  soundChanges = window.algorithmSoundChanges || [];
+}
+
+function findRegularCorrespondences(groups) {
+  // groups: Array of arrays of descendant words (already tokenized and aligned)
+  // Example: [["k","y","n"], ["tʃ","o","ŋ"], ["k","u","n"]]
+  const numLangs = groups[0].length;
+  const correspondences = {};
+
+  for (let pos = 0; pos < groups[0][0].length; pos++) {
+    let pattern = [];
+    for (let lang = 0; lang < numLangs; lang++) {
+      pattern.push(groups.map(wordSet => wordSet[lang][pos] || "-").join(","));
+    }
+    const key = pattern.join("|");
+    correspondences[key] = (correspondences[key] || 0) + 1;
+  }
+  return correspondences;
 }

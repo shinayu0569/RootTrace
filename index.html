@@ -49,6 +49,26 @@
           <span id="randomness-strength-value">0.20</span>
         </label>
       </fieldset>
+      <fieldset style="margin-top:1em;">
+        <legend><strong>Custom Sound Changes</strong></legend>
+        <label>
+          <input type="checkbox" id="enable-user-sound-changes">
+            Enable User Sound Changes <span style="font-size: 0.7em;">(Work in Progress)</span>
+        </label>
+        <div id="user-sound-changes-area" style="display:none; margin-top:0.5em;">
+          <textarea id="user-sound-changes" rows="4" style="width:100%;" placeholder="Enter one rule per line, e.g.&#10;k > tʃ / _i (0.80)"></textarea>
+          <div style="margin-top:0.5em;">
+            <label>
+              <input type="radio" name="sound-change-order" value="user-first" checked>
+              User rules first, then algorithm rules
+            </label>
+            <label style="margin-left:1em;">
+              <input type="radio" name="sound-change-order" value="algo-first">
+              Algorithm rules first, then user rules
+            </label>
+          </div>
+        </div>
+      </fieldset>
     </form>
   </section>
 
@@ -62,5 +82,16 @@
   window.mermaid.initialize({ startOnLoad: false });
 </script>
 <script src="script.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  const enableUserSC = document.getElementById("enable-user-sound-changes");
+  const userSCArea = document.getElementById("user-sound-changes-area");
+  if (enableUserSC && userSCArea) {
+    enableUserSC.addEventListener("change", () => {
+      userSCArea.style.display = enableUserSC.checked ? "block" : "none";
+    });
+  }
+});
+</script>
 </body>
 </html>
