@@ -534,15 +534,18 @@ function parsePhonemeFeatures(token) {
   let features = { ...(featureMap[base] || {}) };
 
   for (const m of mods) {
-    if (m === "\u02D0") features.length = "long";
-    if (m === "\u02D1") features.length = "half-long";
-    if (m === "\u0306") features.length = "extra-short";
-    if (m === "\u0303") features.nasalized = true;
-    if (m === "\u02B0" || m === "\u02B1") features.aspiration = true;
-    if (m === "\u02B2") features.palatalized = true;
-    if (m === "\u02B7") features.labialized = true;
-    if (m === "\u0329") features.syllabic = true;
-    if (m === "\u032F") features.nonsyllabic = true;
+    switch (m) {
+      case "\u02D0": features.length = "long"; break;
+      case "\u02D1": features.length = "half-long"; break;
+      case "\u0306": features.length = "extra-short"; break;
+      case "\u0303": features.nasalized = true; break;
+      case "\u02B0": features.aspiration = true; break;
+      case "\u02B1": features.aspiration = true; break;
+      case "\u02B2": features.palatalized = true; break;
+      case "\u02B7": features.labialized = true; break;
+      case "\u0329": features.syllabic = true; break;
+      case "\u032F": features.nonsyllabic = true; break;
+    }
   }
   return features;
 }
