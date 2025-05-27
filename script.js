@@ -3,6 +3,7 @@
 const featureMap = {
   // Stops (Pulmonic)
   'p': { place: 'bilabial', manner: 'stop', voice: 'voiceless' }, 'b': { place: 'bilabial', manner: 'stop', voice: 'voiced' },
+  't̪': { place: 'dental', manner: 'stop', voice: 'voiceless' }, 'd̪': { place: 'dental', manner: 'stop', voice: 'voiced' },
   't': { place: 'alveolar', manner: 'stop', voice: 'voiceless' }, 'd': { place: 'alveolar', manner: 'stop', voice: 'voiced' },
   'ʈ': { place: 'retroflex', manner: 'stop', voice: 'voiceless' }, 'ɖ': { place: 'retroflex', manner: 'stop', voice: 'voiced' },
   'c': { place: 'palatal', manner: 'stop', voice: 'voiceless' }, 'ɟ': { place: 'palatal', manner: 'stop', voice: 'voiced' },
@@ -43,6 +44,9 @@ const featureMap = {
   'ⱱ': { place: 'labiodental', manner: 'tap', voice: 'voiced' }, 'ɾ': { place: 'alveolar', manner: 'tap', voice: 'voiced' },
   'ɽ': { place: 'retroflex', manner: 'tap', voice: 'voiced' },
   // Affricates (all main IPA, no diacritics)
+  'p͡ɸ': { place: 'bilabial', manner: 'affricate', voice: 'voiceless' }, 'b͡β': { place: 'bilabial', manner: 'affricate', voice: 'voiced' },
+  'p͡f': { place: 'labiodental', manner: 'affricate', voice: 'voiceless' }, 'b͡v': { place: 'labiodental', manner: 'affricate', voice: 'voiced' },
+  't͡θ': { place: 'dental', manner: 'affricate', voice: 'voiceless' }, 'd͡ð': { place: 'dental', manner: 'affricate', voice: 'voiced' },
   't͡s': { place: 'alveolar', manner: 'affricate', voice: 'voiceless' }, 'd͡z': { place: 'alveolar', manner: 'affricate', voice: 'voiced' },
   't͡ɕ': { place: 'alveolo-palatal', manner: 'affricate', voice: 'voiceless' }, 'd͡ʑ': { place: 'alveolo-palatal', manner: 'affricate', voice: 'voiced' },
   't͡ʃ': { place: 'postalveolar', manner: 'affricate', voice: 'voiceless' }, 'd͡ʒ': { place: 'postalveolar', manner: 'affricate', voice: 'voiced' },
@@ -112,6 +116,14 @@ function tokenizeIPA(word, options = {}) {
     else i++;
   }
   return result;
+}
+
+function safeTokenizeIPA(word) {
+  try {
+    return tokenizeIPA(word);
+  } catch (e) {
+    return []; // Or show error to user
+  }
 }
 
 function weightedReconstruction(group, options = {}) {
@@ -344,3 +356,38 @@ document.addEventListener("DOMContentLoaded", () => {
     if (window.mermaid) window.mermaid.run();
   });
 });
+
+class SoundChangeEngine {
+  constructor(rules = []) {
+    this.rules = rules; // [{from, to, env, prob}]
+  }
+  apply(word) {
+    for (const rule of this.rules) {
+      if (Math.random() < (rule.prob || 1)) {
+        word = word.replace(rule.from, (m, ...args) => {
+          // Optionally check environment here
+          if (!rule.env || rule.env(m, ...args)) return rule.to;
+          return m;
+        });
+      }
+    }
+    return word;
+  }
+}
+
+function stochasticColumnChoice(scores, randomnessStrength = 0.2) {
+  // Softmax with randomness
+  const keys = Object.keys(scores);
+  const vals = keys.map(k => scores[k] + (Math.random() - 0.5) * randomnessStrength);
+  const max = Math.max(...vals);
+  const exp = vals.map(v => Math.exp(v - max));
+  const sum = exp.reduce((a, b) => a + b, 0);
+  const probs = exp.map(e => e / sum);
+  const r = Math.random();
+  let acc = 0;
+  for (let i = 0; i < probs.length; i++) {
+    acc += probs[i];
+    if (r < acc) return keys[i];
+  }
+  return keys[0];
+}
