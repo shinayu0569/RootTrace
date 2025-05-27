@@ -143,12 +143,19 @@ function weightedReconstruction(group, options = {}) {
       }
       // --- Add random factor if enabled ---
       if (options.enableRandomness) {
-        // Random value between -0.5 and +0.5, scaled by strength (0 to 1)
         scores[p] += (Math.random() - 0.5) * 2 * (options.randomnessStrength || 0.2);
       }
       // --- End random factor ---
     }
-    candidates.push(Object.entries(scores).sort((a, b) => b[1] - a[1]).map(e => e[0]).slice(0, 3));
+    // --- Use stochastic choice if randomness is enabled ---
+    if (options.enableRandomness) {
+      // Pick one candidate stochastically
+      const chosen = stochasticColumnChoice(scores, options.randomnessStrength || 0.2);
+      candidates.push([chosen]);
+    } else {
+      // Pick top 3 by score (as before)
+      candidates.push(Object.entries(scores).sort((a, b) => b[1] - a[1]).map(e => e[0]).slice(0, 3));
+    }
   }
   return combineCandidates(candidates);
 }
@@ -398,6 +405,7 @@ function interpolatePhoneme(a, b) {
   if (a === b) return a;
   const fa = featureMap[a], fb = featureMap[b];
   if (!fa || !fb) return a; // fallback: keep proto
+
   // Vowel interpolation
   if (fa.height && fb.height) {
     // Height: close < near-close < close-mid < mid < open-mid < near-open < open
@@ -421,16 +429,34 @@ function interpolatePhoneme(a, b) {
     }
     return best || a;
   }
+
   // Consonant interpolation
   if (fa.place && fb.place) {
     const places = ["bilabial", "labiodental", "dental", "alveolar", "postalveolar", "retroflex", "palatal", "velar", "uvular", "pharyngeal", "epiglottal", "glottal", "alveolo-palatal", "lateral", "labial-velar"];
-    const manners = ["stop", "nasal", "fricative", "lateral fricative", "approximant", "lateral approximant", "trill", "tap", "affricate", "click", "implosive"];
+    // Group manners
+    const obstruents = ["stop", "fricative", "affricate", "lateral fricative"];
+    const sonorants = ["nasal", "approximant", "lateral approximant", "trill", "tap"];
+    let manner = fa.manner;
+
+    // Only interpolate manner if both are in the same class
+    if (obstruents.includes(fa.manner) && obstruents.includes(fb.manner)) {
+      const manners = ["stop", "affricate", "fricative", "lateral fricative"];
+      manner = manners[Math.round((manners.indexOf(fa.manner) + manners.indexOf(fb.manner)) / 2)];
+    } else if (sonorants.includes(fa.manner) && sonorants.includes(fb.manner)) {
+      const manners = ["nasal", "tap", "trill", "approximant", "lateral approximant"];
+      manner = manners[Math.round((manners.indexOf(fa.manner) + manners.indexOf(fb.manner)) / 2)];
+    } else {
+      // If not in the same class, prefer proto's manner (fa)
+      manner = fa.manner;
+    }
+
+    // Place and voice interpolation as before
     function avgIndex(valA, valB, arr) {
       return arr[Math.round((arr.indexOf(valA) + arr.indexOf(valB)) / 2)];
     }
     const place = avgIndex(fa.place, fb.place, places);
-    const manner = avgIndex(fa.manner, fb.manner, manners);
-    const voice = (fa.voice === fb.voice) ? fa.voice : "voiced"; // if different, prefer voiced
+    const voice = (fa.voice === fb.voice) ? fa.voice : "voiced";
+
     // Find closest consonant in featureMap
     let best = null, bestScore = 99;
     for (const [sym, f] of Object.entries(featureMap)) {
