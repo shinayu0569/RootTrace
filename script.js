@@ -261,12 +261,37 @@ function highlightConservative(group, protoCandidates) {
 
 function phonemeDistance(a, b) {
   if (a === b) return 0;
-  const f1 = featureMap[a], f2 = featureMap[b];
-  if (!f1 || !f2) return 2;
+  const fa = parsePhonemeFeatures(a), fb = parsePhonemeFeatures(b);
+  if (!fa || !fb) return 3; // fallback for unknowns
+
   let score = 0;
-  if (f1.place !== f2.place) score++;
-  if (f1.manner !== f2.manner) score++;
-  if (f1.voice !== f2.voice) score++;
+
+  // Consonant features
+  if (fa.place && fb.place) {
+    if (fa.place !== fb.place) score += 1.5;
+    if (fa.manner !== fb.manner) score += 1.2;
+    if (fa.voice !== fb.voice) score += 0.7;
+    if (!!fa.aspiration !== !!fb.aspiration) score += 0.5;
+    if (!!fa.nasalized !== !!fb.nasalized) score += 0.5;
+    if (!!fa.palatalized !== !!fb.palatalized) score += 0.5;
+    if (!!fa.labialized !== !!fb.labialized) score += 0.5;
+    if (!!fa.syllabic !== !!fb.syllabic) score += 0.5;
+  }
+
+  // Vowel features
+  if (fa.height && fb.height) {
+    const heights = ["close", "near-close", "close-mid", "mid", "open-mid", "near-open", "open"];
+    const fronts = ["front", "central", "back"];
+    score += Math.abs(heights.indexOf(fa.height) - heights.indexOf(fb.height)) * 0.7;
+    score += Math.abs(fronts.indexOf(fa.frontness) - fronts.indexOf(fb.frontness)) * 0.7;
+    if (!!fa.rounded !== !!fb.rounded) score += 0.5;
+    if (!!fa.nasalized !== !!fb.nasalized) score += 0.5;
+    if (!!fa.length !== !!fb.length) score += 0.3;
+  }
+
+  // If one is a vowel and one is a consonant, make distance large
+  if ((fa.place && !fb.place) || (!fa.place && fb.place)) score += 3;
+
   return score;
 }
 
@@ -349,7 +374,20 @@ async function loadSoundChanges() {
     if (!res.ok) throw new Error('Failed to load sound-changes.json');
     const raw = await res.json();
     window.algorithmSoundChanges = raw
-      .map(obj => obj.rule ? parseVulgarRule(obj.rule) : null)
+      .map(obj => {
+        if (obj.from && obj.to) {
+          return {
+            from: obj.from,
+            to: obj.to,
+            env: obj.env || null,
+            except: obj.except || null,
+            chance: obj.chance !== undefined ? obj.chance : 1.0
+          };
+        } else if (obj.rule) {
+          return parseVulgarRule(obj.rule);
+        }
+        return null;
+      })
       .filter(Boolean);
     soundChanges = window.algorithmSoundChanges;
   } catch (e) {
@@ -577,43 +615,48 @@ function parsePhonemeFeatures(token) {
 }
 
 function applySoundChanges(phonemes) {
+  // Convert phoneme array to string for easier manipulation
+  let word = phonemes.join('');
   for (const rule of soundChanges) {
-    for (let i = 0; i < phonemes.length; i++) {
-      if (phonemes[i] === rule.from) {
+    // For each rule, scan the word left-to-right and apply as many times as possible
+    let tokens = tokenizeIPA(word); // always re-tokenize after each rule
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === rule.from) {
         // Check environment
         let envOk = true;
         if (rule.env) {
           if (rule.env.startsWith('_')) {
-            envOk = phonemes[i + 1] === rule.env.slice(1);
+            envOk = tokens[i + 1] === rule.env.slice(1);
           } else if (rule.env.endsWith('_')) {
-            envOk = phonemes[i - 1] === rule.env.slice(0, -1);
+            envOk = tokens[i - 1] === rule.env.slice(0, -1);
           } else if (rule.env.includes('_')) {
-            // e.g. "a_b" means a before and b after
             const [before, after] = rule.env.split('_');
-            envOk = (!before || phonemes[i - 1] === before) &&
-                    (!after || phonemes[i + 1] === after);
+            envOk = (!before || tokens[i - 1] === before) &&
+                    (!after || tokens[i + 1] === after);
           }
         }
         // Check exception
         if (rule.except && envOk) {
           if (rule.except.startsWith('_')) {
-            if (phonemes[i + 1] === rule.except.slice(1)) envOk = false;
+            if (tokens[i + 1] === rule.except.slice(1)) envOk = false;
           } else if (rule.except.endsWith('_')) {
-            if (phonemes[i - 1] === rule.except.slice(0, -1)) envOk = false;
+            if (tokens[i - 1] === rule.except.slice(0, -1)) envOk = false;
           } else if (rule.except.includes('_')) {
             const [before, after] = rule.except.split('_');
-            if ((!before || phonemes[i - 1] === before) &&
-                (!after || phonemes[i + 1] === after)) envOk = false;
+            if ((!before || tokens[i - 1] === before) &&
+                (!after || tokens[i + 1] === after)) envOk = false;
           }
         }
         // Apply with chance
         if (envOk && Math.random() < rule.chance) {
-          phonemes[i] = rule.to;
+          tokens[i] = rule.to;
         }
       }
     }
+    word = tokens.join('');
   }
-  return phonemes;
+  // Return as array of phonemes
+  return tokenizeIPA(word);
 }
 
 function parseVulgarRule(ruleStr) {

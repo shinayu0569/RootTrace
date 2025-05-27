@@ -1,25 +1,41 @@
+:root {
+  --accent: #4a90e2;
+  --accent-light: #e3f0fc;
+  --bg: #f7f9fb;
+  --card-bg: #fff;
+  --border: #e0e6ed;
+  --text: #222;
+  --muted: #888;
+  --radius: 12px;
+  --shadow: 0 2px 12px 0 rgba(74,144,226,0.07);
+}
+
 body {
-  font-family: 'Noto Sans', sans-serif;
+  font-family: 'Noto Sans', 'Segoe UI', Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
   margin: 0;
   padding: 0;
-  line-height: 1.6;
-  background-color: #fff;
-  color: #333;
+  min-height: 100vh;
 }
 
 header {
-  background-color: #4a90e2;
-  color: white;
-  padding: 1em;
+  background: var(--accent);
+  color: #fff;
+  padding: 2em 1em 1.2em 1em;
   text-align: center;
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: var(--shadow);
 }
 
 h1 {
   margin: 0 0 0.2em 0;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 section {
-  padding: 1em;
+  padding: 1.5em 0.5em;
 }
 
 /* Layout Container */
@@ -31,64 +47,201 @@ body {
 
 #input-area, #settings-panel, #output-area {
   width: 100%;
-  max-width: 800px;
-  box-sizing: border-box;
+  max-width: 700px;
+  margin: 1.5em auto;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  padding: 2em 2em 1.5em 2em;
 }
 
 /* Input & Button */
-#input-text {
+#input-text, #user-sound-changes {
   width: 100%;
   box-sizing: border-box;
-  font-family: monospace;
-  padding: 10px;
-  font-size: 1em;
-  margin-bottom: 0.5em;
+  font-family: 'Noto Sans Mono', 'Fira Mono', 'Consolas', monospace;
+  padding: 12px;
+  font-size: 1.1em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #f5f7fa;
+  margin-bottom: 1em;
+  transition: border 0.2s;
+}
+
+#input-text:focus, #user-sound-changes:focus {
+  border: 1.5px solid var(--accent);
+  outline: none;
 }
 
 #reconstruct-btn {
-  padding: 0.6em 1em;
-  font-size: 1em;
-  background-color: #4a90e2;
-  color: white;
+  padding: 0.7em 2em;
+  font-size: 1.1em;
+  background: var(--accent);
+  color: #fff;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius);
   cursor: pointer;
+  box-shadow: 0 2px 8px 0 rgba(74,144,226,0.08);
+  transition: background 0.2s, box-shadow 0.2s;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
-#reconstruct-btn:hover {
-  background-color: #3a78c2;
+#reconstruct-btn:hover, #reconstruct-btn:focus {
+  background: #357ab8;
+  box-shadow: 0 4px 16px 0 rgba(74,144,226,0.13);
+}
+
+/* Settings Panel */
+#settings-panel {
+  margin-top: 0.5em;
+}
+
+fieldset {
+  border: none;
+  margin: 1.2em 0 0.8em 0;
+  padding: 0;
+}
+
+legend {
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 0.5em;
+}
+
+label {
+  font-size: 1em;
+  margin-bottom: 0.5em;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  accent-color: var(--accent);
+  width: 1.1em;
+  height: 1.1em;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
+
+#randomness-strength-value {
+  font-family: monospace;
+  color: var(--muted);
+  margin-left: 0.3em;
+}
+
+#user-sound-changes-area {
+  margin-top: 0.7em;
 }
 
 /* Results */
 .result-group {
-  margin-bottom: 20px;
-  padding: 10px;
-  border-left: 4px solid #4a90e2;
-  background: #f9f9f9;
-  border-radius: 4px;
+  margin-bottom: 2em;
+  padding: 1.2em 1em 1em 1.2em;
+  border-left: 4px solid var(--accent);
+  background: #fafdff;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 4px 0 rgba(74,144,226,0.04);
 }
 
-.result-group code {
-  background: #eee;
-  padding: 2px 4px;
-  border-radius: 3px;
+.result-group strong {
+  font-size: 1.1em;
+  color: var(--accent);
+}
+
+.result-group code, .result-group li {
+  font-family: 'Noto Sans Mono', 'Fira Mono', 'Consolas', monospace;
+  background: #f3f6fa;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #2a2a2a;
 }
 
 .result-group ul {
-  margin-top: 0.5em;
-  padding-left: 1.2em;
+  margin-top: 0.7em;
+  padding-left: 1.5em;
 }
 
 /* Media Queries for Responsiveness */
-@media (max-width: 600px) {
-  header, section {
-    padding: 0.8em;
+@media (max-width: 700px) {
+  #input-area, #settings-panel, #output-area {
+    padding: 1em 0.5em;
+    max-width: 98vw;
   }
+  .evo-diagram {
+    max-width: 98vw;
+  }
+}
 
-  #reconstruct-btn {
-    width: 100%;
+@media (max-width: 500px) {
+  header {
+    padding: 1.2em 0.5em 0.8em 0.5em;
+    font-size: 1em;
+  }
+  #input-area, #settings-panel, #output-area {
+    padding: 0.7em 0.2em;
+    max-width: 99vw;
+  }
+  .evo-diagram {
+    padding: 0.2em 0.1em;
+    max-width: 99vw;
+  }
+  section {
+    padding: 1em 0.2em;
+  }
+  h1 {
+    font-size: 1.3em;
+  }
+  h2 {
     font-size: 1.1em;
   }
+  #input-text, #user-sound-changes {
+    font-size: 1em;
+    padding: 8px;
+  }
+  label {
+    font-size: 0.97em;
+  }
+}
+
+@media (max-width: 400px) {
+  #input-area, #settings-panel, #output-area {
+    padding: 0.4em 0.05em;
+    max-width: 100vw;
+  }
+  .evo-diagram {
+    padding: 0.1em 0.01em;
+    max-width: 100vw;
+  }
+  section {
+    padding: 0.7em 0.05em;
+  }
+  h1 {
+    font-size: 1.1em;
+  }
+  h2 {
+    font-size: 1em;
+  }
+  #input-text, #user-sound-changes {
+    font-size: 0.95em;
+    padding: 6px;
+  }
+  label {
+    font-size: 0.93em;
+  }
+}
+
+/* Ensure horizontal scroll for overflow on tiny screens */
+#input-area, #settings-panel, #output-area, .evo-diagram {
+  overflow-x: auto;
+  min-width: 0;
 }
 
 .evo-diagram {
@@ -96,20 +249,27 @@ body {
   max-width: 600px;
   height: auto;
   display: block;
-  margin: 1em auto 2em auto;
+  margin: 1.5em auto 2em auto;
   background: none;
   box-sizing: border-box;
+  border-radius: var(--radius);
+  box-shadow: 0 2px 12px 0 rgba(74,144,226,0.07);
+  padding: 0.5em 0.2em;
 }
 
 .evo-diagram rect {
   transition: fill 0.2s, stroke 0.2s;
+  rx: 8;
+  stroke-width: 1.5;
 }
 
 .evo-diagram rect:hover {
-  fill: #e3f0fc;
-  stroke: #357ab8;
+  fill: var(--accent-light);
+  stroke: var(--accent);
 }
 
 .evo-diagram text {
   user-select: all;
+  font-family: 'Noto Sans Mono', 'Fira Mono', 'Consolas', monospace;
+  font-size: 1em;
 }

@@ -1,79 +1,179 @@
 [
   {
-    "rule": "k > tʃ / _i (0.80)"
+    "from": "k",
+    "to": "tʃ",
+    "env": "_i",
+    "except": null,
+    "chance": 0.80
   },
   {
-    "rule": "a > æ (0.20)"
+    "from": "a",
+    "to": "æ",
+    "env": null,
+    "except": null,
+    "chance": 0.20
   },
   {
-    "rule": "n > ŋ / _k ! _g (0.50)"
+    "from": "n",
+    "to": "ŋ",
+    "env": "_k",
+    "except": "_g",
+    "chance": 0.50
   },
   {
-    "rule": "t > ts / _i (0.60)"
+    "from": "t",
+    "to": "ts",
+    "env": "_i",
+    "except": null,
+    "chance": 0.60
   },
   {
-    "rule": "d > ð / _V (0.30)" // V = any vowel
+    "from": "d",
+    "to": "ð",
+    "env": "_V",
+    "except": null,
+    "chance": 0.30
   },
   {
-    "rule": "s > ʃ / _i (0.40)"
+    "from": "s",
+    "to": "ʃ",
+    "env": "_i",
+    "except": null,
+    "chance": 0.40
   },
   {
-    "rule": "p > f / _# (0.25)" // # = word boundary
+    "from": "p",
+    "to": "f",
+    "env": "_#",
+    "except": null,
+    "chance": 0.25
   },
   {
-    "rule": "e > i / _C (0.15)" // C = any consonant
+    "from": "e",
+    "to": "i",
+    "env": "_C",
+    "except": null,
+    "chance": 0.15
   },
   {
-    "rule": "o > u / _n (0.10)"
+    "from": "o",
+    "to": "u",
+    "env": "_n",
+    "except": null,
+    "chance": 0.10
   },
   {
-    "rule": "g > ɣ / V_V (0.35)"
+    "from": "g",
+    "to": "ɣ",
+    "env": "V_V",
+    "except": null,
+    "chance": 0.35
   },
   // Naturalistic shifts
   {
-    "rule": "t > θ / _# (0.18)" // word-final t to θ
+    "from": "t",
+    "to": "θ",
+    "env": "_#",
+    "except": null,
+    "chance": 0.18
   },
   {
-    "rule": "b > v / V_V (0.22)" // intervocalic lenition
+    "from": "b",
+    "to": "v",
+    "env": "V_V",
+    "except": null,
+    "chance": 0.22
   },
   {
-    "rule": "m > ɱ / _f (0.12)" // before labiodental
+    "from": "m",
+    "to": "ɱ",
+    "env": "_f",
+    "except": null,
+    "chance": 0.12
   },
   {
-    "rule": "i > j / _V (0.08)" // glide formation
+    "from": "i",
+    "to": "j",
+    "env": "_V",
+    "except": null,
+    "chance": 0.08
   },
   {
-    "rule": "u > w / _V (0.07)"
+    "from": "u",
+    "to": "w",
+    "env": "_V",
+    "except": null,
+    "chance": 0.07
   },
   {
-    "rule": "r > ɾ / V_V (0.20)" // tap between vowels
+    "from": "r",
+    "to": "ɾ",
+    "env": "V_V",
+    "except": null,
+    "chance": 0.20
   },
   {
-    "rule": "s > z / V_V (0.16)" // voicing between vowels
+    "from": "s",
+    "to": "z",
+    "env": "V_V",
+    "except": null,
+    "chance": 0.16
   },
   {
-    "rule": "a > ɑ / _# (0.09)" // backing word-finally
+    "from": "a",
+    "to": "ɑ",
+    "env": "_#",
+    "except": null,
+    "chance": 0.09
   },
   // Non-naturalistic shifts
   {
-    "rule": "p > ʔ / _a (0.05)" // glottalization before a
+    "from": "p",
+    "to": "ʔ",
+    "env": "_a",
+    "except": null,
+    "chance": 0.05
   },
   {
-    "rule": "t > ʃ / _u (0.03)" // t to sh before u
+    "from": "t",
+    "to": "ʃ",
+    "env": "_u",
+    "except": null,
+    "chance": 0.03
   },
   {
-    "rule": "k > x / _e (0.04)" // k to x before e
+    "from": "k",
+    "to": "x",
+    "env": "_e",
+    "except": null,
+    "chance": 0.04
   },
   {
-    "rule": "e > o / _s (0.02)" // vowel raising before s
+    "from": "e",
+    "to": "o",
+    "env": "_s",
+    "except": null,
+    "chance": 0.02
   },
   {
-    "rule": "n > ɲ / _tʃ (0.01)" // n to palatal nasal before tʃ
+    "from": "n",
+    "to": "ɲ",
+    "env": "_tʃ",
+    "except": null,
+    "chance": 0.01
   },
   {
-    "rule": "d > t / _# (0.02)" // devoicing word-finally
+    "from": "d",
+    "to": "t",
+    "env": "_#",
+    "except": null,
+    "chance": 0.02
   },
   {
-    "rule": "f > p / _i (0.01)" // fortition before i
+    "from": "f",
+    "to": "p",
+    "env": "_i",
+    "except": null,
+    "chance": 0.01
   }
 ]
