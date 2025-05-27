@@ -96,6 +96,23 @@ const consonants = [
 const affricates = ["t͡s", "d͡z", "t͡ɕ", "d͡ʑ", "t͡ʃ", "d͡ʒ", "ʈ͡ʂ", "ɖ͡ʐ", "c͡ç", "ɟ͡ʝ", "k͡x", "g͡ɣ", "q͡χ", "ɢ͡ʁ"];
 const ipaFeatures = { vowels, consonants, affricates };
 
+// Add this near your IPA definitions
+
+const IPA_MODIFIERS = [
+  "\u02D0", // ː  long
+  "\u02D1", // ˑ  half-long
+  "\u0306", // ̆  extra-short
+  "\u0303", // ̃  nasalization
+  "\u02B0", // ʰ  aspiration
+  "\u02B1", // ʱ  breathy aspiration
+  "\u02B2", // ʲ  palatalization
+  "\u02B7", // ʷ  labialization
+  "\u0329", // ̩  syllabic
+  "\u032F", // ̯  non-syllabic
+  "\u030C", // ̌  caron (maybe for tone, not used so far)
+  "\u0308", // ̈  centralization (not used so far)
+];
+
 // ========== Utility Functions (Optimized) ==========
 
 const splitGroups = input => input.trim().split(/\n+/).map(g => g.trim().split(/\s+/));
@@ -106,14 +123,38 @@ const allPhonemes = [...affricates, ...consonants, ...vowels].sort((a, b) => b.l
 function tokenizeIPA(word, options = {}) {
   // Respect multiCharPhonemes setting
   let phonemeList = options.multiCharPhonemes === false
-    ? [...consonants, ...vowels] // Only single-char
-    : allPhonemes; // Default: multi-char first
+    ? [...consonants, ...vowels]
+    : allPhonemes;
+
+  // Build a regex for modifiers
+  const modifierRegex = new RegExp(
+    `(?:${IPA_MODIFIERS.map(m => '\\u' + m.charCodeAt(0).toString(16).padStart(4, '0')).join('|')})+`
+  );
 
   let result = [], i = 0;
   while (i < word.length) {
     let match = phonemeList.find(p => word.startsWith(p, i));
-    if (match) { result.push(match); i += match.length; }
-    else i++;
+    if (match) {
+      let j = i + match.length;
+      // Collect all following modifiers
+      let mods = '';
+      while (j < word.length) {
+        let found = IPA_MODIFIERS.find(m => word[j] === m);
+        if (found) { mods += found; j++; }
+        else break;
+      }
+      result.push(match + mods);
+      i = j;
+    } else {
+      // Try to match a modifier alone (for edge cases)
+      let found = IPA_MODIFIERS.find(m => word[i] === m);
+      if (found) {
+        result.push(found);
+        i++;
+      } else {
+        i++; // skip unknown
+      }
+    }
   }
   return result;
 }
@@ -403,7 +444,7 @@ function stochasticColumnChoice(scores, randomnessStrength = 0.2) {
 
 function interpolatePhoneme(a, b) {
   if (a === b) return a;
-  const fa = featureMap[a], fb = featureMap[b];
+  const fa = parsePhonemeFeatures(a), fb = parsePhonemeFeatures(b);
   if (!fa || !fb) return a; // fallback: keep proto
 
   // Vowel interpolation
@@ -485,4 +526,23 @@ function interpolateForms(proto, target) {
     else result.push(interpolatePhoneme(a, b));
   }
   return result.join("");
+}
+
+function parsePhonemeFeatures(token) {
+  // Separate base and modifiers
+  let base = token[0], mods = token.slice(1);
+  let features = { ...(featureMap[base] || {}) };
+
+  for (const m of mods) {
+    if (m === "\u02D0") features.length = "long";
+    if (m === "\u02D1") features.length = "half-long";
+    if (m === "\u0306") features.length = "extra-short";
+    if (m === "\u0303") features.nasalized = true;
+    if (m === "\u02B0" || m === "\u02B1") features.aspiration = true;
+    if (m === "\u02B2") features.palatalized = true;
+    if (m === "\u02B7") features.labialized = true;
+    if (m === "\u0329") features.syllabic = true;
+    if (m === "\u032F") features.nonsyllabic = true;
+  }
+  return features;
 }
