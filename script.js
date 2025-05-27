@@ -340,7 +340,9 @@ document.addEventListener("DOMContentLoaded", () => {
       let diagramCode = 'flowchart TD\n';
       let protoNode = `P0["${res.conservative}"]`;
       intermediates.forEach((inter, i) => {
-        let interNode = `I${i}["${inter}"]`;
+        // Interpolate between proto and intermediate
+        const interpolated = interpolateForms(res.conservative, inter);
+        let interNode = `I${i}["${interpolated}"]`;
         diagramCode += `${protoNode} --> ${interNode}\n`;
         clusters[i].forEach((desc, j) => {
           let descNode = `D${i}_${j}["${desc}"]`;
@@ -390,4 +392,71 @@ function stochasticColumnChoice(scores, randomnessStrength = 0.2) {
     if (r < acc) return keys[i];
   }
   return keys[0];
+}
+
+function interpolatePhoneme(a, b) {
+  if (a === b) return a;
+  const fa = featureMap[a], fb = featureMap[b];
+  if (!fa || !fb) return a; // fallback: keep proto
+  // Vowel interpolation
+  if (fa.height && fb.height) {
+    // Height: close < near-close < close-mid < mid < open-mid < near-open < open
+    const heights = ["close", "near-close", "close-mid", "mid", "open-mid", "near-open", "open"];
+    const fronts = ["front", "central", "back"];
+    function avgIndex(valA, valB, arr) {
+      return arr[Math.round((arr.indexOf(valA) + arr.indexOf(valB)) / 2)];
+    }
+    const height = avgIndex(fa.height, fb.height, heights);
+    const frontness = avgIndex(fa.frontness, fb.frontness, fronts);
+    const rounded = (fa.rounded || fb.rounded); // if either is rounded, keep rounded
+    // Find closest vowel in featureMap
+    let best = null, bestScore = 99;
+    for (const [sym, f] of Object.entries(featureMap)) {
+      if (!f.height) continue;
+      let score = 0;
+      if (f.height !== height) score++;
+      if (f.frontness !== frontness) score++;
+      if (!!f.rounded !== !!rounded) score++;
+      if (score < bestScore) { best = sym; bestScore = score; }
+    }
+    return best || a;
+  }
+  // Consonant interpolation
+  if (fa.place && fb.place) {
+    const places = ["bilabial", "labiodental", "dental", "alveolar", "postalveolar", "retroflex", "palatal", "velar", "uvular", "pharyngeal", "epiglottal", "glottal", "alveolo-palatal", "lateral", "labial-velar"];
+    const manners = ["stop", "nasal", "fricative", "lateral fricative", "approximant", "lateral approximant", "trill", "tap", "affricate", "click", "implosive"];
+    function avgIndex(valA, valB, arr) {
+      return arr[Math.round((arr.indexOf(valA) + arr.indexOf(valB)) / 2)];
+    }
+    const place = avgIndex(fa.place, fb.place, places);
+    const manner = avgIndex(fa.manner, fb.manner, manners);
+    const voice = (fa.voice === fb.voice) ? fa.voice : "voiced"; // if different, prefer voiced
+    // Find closest consonant in featureMap
+    let best = null, bestScore = 99;
+    for (const [sym, f] of Object.entries(featureMap)) {
+      if (!f.place) continue;
+      let score = 0;
+      if (f.place !== place) score++;
+      if (f.manner !== manner) score++;
+      if (f.voice !== voice) score++;
+      if (score < bestScore) { best = sym; bestScore = score; }
+    }
+    return best || a;
+  }
+  return a;
+}
+
+function interpolateForms(proto, target) {
+  const protoPhon = tokenizeIPA(proto);
+  const targetPhon = tokenizeIPA(target);
+  const len = Math.max(protoPhon.length, targetPhon.length);
+  let result = [];
+  for (let i = 0; i < len; i++) {
+    const a = protoPhon[i] || "";
+    const b = targetPhon[i] || "";
+    if (!a) result.push(b);
+    else if (!b) result.push(a);
+    else result.push(interpolatePhoneme(a, b));
+  }
+  return result.join("");
 }
