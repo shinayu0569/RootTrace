@@ -450,7 +450,7 @@ document.addEventListener("DOMContentLoaded", () => {
       groupDiv.appendChild(ul);
       const { clusters, intermediates } = guessIntermediates(res.conservative, res.group);
       let diagramCode = 'flowchart TD\n';
-      let protoNode = `P0["${res.conservative}"]`;
+      let protoNode = `P0["*${res.conservative}"]`; // <-- Add asterisk here
       intermediates.forEach((inter, i) => {
         // Interpolate between proto and intermediate
         const interpolated = interpolateForms(res.conservative, inter);
