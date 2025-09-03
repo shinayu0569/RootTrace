@@ -15,8 +15,8 @@
   </header>
 
   <section id="input-area">
-    <textarea id="input-text" placeholder="Enter descendant words here..." rows="12" style="font-family: 'Noto Sans', 'Noto Sans IPA', 'Noto Sans Symbols', 'Noto Serif', 'Arial Unicode MS', 'Segoe UI Symbol', 'DejaVu Sans', 'Lucida Sans Unicode', 'Arial', sans-serif;"></textarea>
-    <button id="reconstruct-btn">Reconstruct</button>
+    <textarea id="input-text" aria-label="Descendant words input" placeholder="Enter descendant words here..." rows="12" style="font-family: 'Noto Sans', 'Noto Sans IPA', 'Noto Sans Symbols', 'Noto Serif', 'Arial Unicode MS', 'Segoe UI Symbol', 'DejaVu Sans', 'Lucida Sans Unicode', 'Arial', sans-serif;"></textarea>
+    <button id="reconstruct-btn" aria-label="Reconstruct Proto Forms">Reconstruct</button>
   </section>
 
   <section id="settings-panel">
@@ -76,6 +76,8 @@
     <h2>Proto Reconstructions</h2>
     <div id="output"></div>
   </section>
+
+  <div class="error-message" role="alert">...</div>
 
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>
