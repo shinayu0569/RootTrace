@@ -433,76 +433,41 @@ document.addEventListener("DOMContentLoaded", () => {
       randomnessStrength
     };
 
-    // Read user sound change settings
-    const enableUserSoundChanges = document.getElementById("enable-user-sound-changes").checked;
-    const userSoundChangesText = document.getElementById("user-sound-changes").value;
-    const soundChangeOrder = document.querySelector('input[name="sound-change-order"]:checked').value;
-
-    let userSoundChanges = [];
-    if (enableUserSoundChanges && userSoundChangesText.trim()) {
-      userSoundChanges = userSoundChangesText
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line && !line.startsWith('//'))
-        .map(parseVulgarRule)
-        .filter(Boolean);
-    }
-
-    // After parsing user rules
-    if (userSoundChanges.some(rule => !rule)) {
-      outputDiv.innerHTML = `<div class="error-message">Invalid sound change rule detected. Please check your rules.</div>`;
-      return;
-    }
-
-    if (enableUserSoundChanges) {
-      if (soundChangeOrder === "user-first") {
-        soundChanges = [...userSoundChanges, ...(window.algorithmSoundChanges || [])];
-      } else {
-        soundChanges = [...(window.algorithmSoundChanges || []), ...userSoundChanges];
-      }
-    } else {
-      soundChanges = window.algorithmSoundChanges || [];
-    }
-
-    try {
-      const results = processInput(inputText, options);
-      outputDiv.innerHTML = "";
-      results.forEach((res, index) => {
-        const groupDiv = document.createElement("div");
-        groupDiv.className = "result-group";
-        const groupTitle = document.createElement("strong");
-        groupTitle.textContent = `Group ${index + 1}`;
-        groupDiv.appendChild(groupTitle);
-        const ul = document.createElement("ul");
-        res.reconstructions.forEach(form => {
-          const li = document.createElement("li");
-          li.textContent = "*" + form + (form === res.conservative ? " (most conservative)" : "");
-          ul.appendChild(li);
-        });
-        groupDiv.appendChild(ul);
-        const { clusters, intermediates } = guessIntermediates(res.conservative, res.group);
-        let diagramCode = 'flowchart TD\n';
-        let protoNode = `P0["*${res.conservative}"]`; // <-- Add asterisk here
-        intermediates.forEach((inter, i) => {
-          // Interpolate between proto and intermediate
-          const interpolated = interpolateForms(res.conservative, inter);
-          let interNode = `I${i}["${interpolated}"]`;
-          diagramCode += `${protoNode} --> ${interNode}\n`;
-          clusters[i].forEach((desc, j) => {
-            let descNode = `D${i}_${j}["${desc}"]`;
-            diagramCode += `${interNode} --> ${descNode}\n`;
-          });
-        });
-        const diagramDiv = document.createElement("div");
-        diagramDiv.className = "mermaid evo-diagram";
-        diagramDiv.textContent = diagramCode;
-        groupDiv.appendChild(diagramDiv);
-        outputDiv.appendChild(groupDiv);
+    const results = processInput(inputText, options);
+    outputDiv.innerHTML = "";
+    results.forEach((res, index) => {
+      const groupDiv = document.createElement("div");
+      groupDiv.className = "result-group";
+      const groupTitle = document.createElement("strong");
+      groupTitle.textContent = `Group ${index + 1}`;
+      groupDiv.appendChild(groupTitle);
+      const ul = document.createElement("ul");
+      res.reconstructions.forEach(form => {
+        const li = document.createElement("li");
+        li.textContent = form + (form === res.conservative ? " (most conservative)" : "");
+        ul.appendChild(li);
       });
-      if (window.mermaid) window.mermaid.run();
-    } catch (e) {
-      outputDiv.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
-    }
+      groupDiv.appendChild(ul);
+      const { clusters, intermediates } = guessIntermediates(res.conservative, res.group);
+      let diagramCode = 'flowchart TD\n';
+      let protoNode = `P0["*${res.conservative}"]`; // <-- Add asterisk here
+      intermediates.forEach((inter, i) => {
+        // Interpolate between proto and intermediate
+        const interpolated = interpolateForms(res.conservative, inter);
+        let interNode = `I${i}["${interpolated}"]`;
+        diagramCode += `${protoNode} --> ${interNode}\n`;
+        clusters[i].forEach((desc, j) => {
+          let descNode = `D${i}_${j}["${desc}"]`;
+          diagramCode += `${interNode} --> ${descNode}\n`;
+        });
+      });
+      const diagramDiv = document.createElement("div");
+      diagramDiv.className = "mermaid evo-diagram";
+      diagramDiv.textContent = diagramCode;
+      groupDiv.appendChild(diagramDiv);
+      outputDiv.appendChild(groupDiv);
+    });
+    if (window.mermaid) window.mermaid.run();
   });
 });
 
@@ -708,6 +673,30 @@ function parseVulgarRule(ruleStr) {
   };
 }
 
+const enableUserSoundChanges = document.getElementById("enable-user-sound-changes").checked;
+const userSoundChangesText = document.getElementById("user-sound-changes").value;
+const soundChangeOrder = document.querySelector('input[name="sound-change-order"]:checked').value;
+
+let userSoundChanges = [];
+if (enableUserSoundChanges && userSoundChangesText.trim()) {
+  userSoundChanges = userSoundChangesText
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('//'))
+    .map(parseVulgarRule)
+    .filter(Boolean);
+}
+
+if (enableUserSoundChanges) {
+  if (soundChangeOrder === "user-first") {
+    soundChanges = [...userSoundChanges, ...(window.algorithmSoundChanges || [])];
+  } else {
+    soundChanges = [...(window.algorithmSoundChanges || []), ...userSoundChanges];
+  }
+} else {
+  soundChanges = window.algorithmSoundChanges || [];
+}
+
 function findRegularCorrespondences(groups) {
   // groups: Array of arrays of descendant words (already tokenized and aligned)
   // Example: [["k","y","n"], ["tʃ","o","ŋ"], ["k","u","n"]]
@@ -724,10 +713,3 @@ function findRegularCorrespondences(groups) {
   }
   return correspondences;
 }
-
-let updateTimeout;
-function debouncedUpdate() {
-  clearTimeout(updateTimeout);
-  updateTimeout = setTimeout(updateOutput, 200);
-}
-// Use debouncedUpdate instead of updateOutput for input events
