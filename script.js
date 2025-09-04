@@ -201,6 +201,41 @@ function weightedReconstruction(group, options = {}) {
   return combineCandidates(candidates);
 }
 
+function comparativeReconstruction(group, options = {}) {
+  // Step 1: Tokenize and align
+  const phonemeLists = group.map(word => tokenizeIPA(word, options));
+  const maxLen = Math.max(...phonemeLists.map(x => x.length));
+  let protoForm = [];
+
+  // Step 2: Build correspondence table
+  for (let i = 0; i < maxLen; i++) {
+    const column = phonemeLists.map(p => p[i] || "-");
+    // Step 3: Regularity & environment detection (simplified for now)
+    let counts = {};
+    for (let p of column) counts[p] = (counts[p] || 0) + 1;
+
+    // Step 4: Typological naturalness scoring
+    let candidates = Object.keys(counts);
+    candidates.sort((a, b) => {
+      // Prefer majority, then typological frequency, then stability
+      return (
+        counts[b] - counts[a] ||
+        getTypologicalFrequency(b) - getTypologicalFrequency(a) ||
+        getPhonemeStability(b) - getPhonemeStability(a)
+      );
+    });
+
+    // Step 5: Prefer conservative (less innovative) sound
+    // For now, pick the top candidate; later, add environment/innovation checks
+    protoForm.push(candidates[0]);
+  }
+
+  // Step 6: Stress (if enabled)
+  const stresses = group.map(extractStress).filter(v => v !== null);
+  const stressPos = stresses.length ? mode(stresses) : null;
+  return [applyStress(protoForm.join(""), stressPos)];
+}
+
 function isKnownSoundChange(source, result) {
   const c = {
     "p": ["b", "β", "f", "v", "ɸ"], "b": ["β", "v", "p"], "t": ["d", "ð", "θ", "s", "ɾ", "ʃ", "ts", "tʃ"],
@@ -348,23 +383,57 @@ function guessIntermediates(proto, descendants) {
 function processInput(inputText, options) {
   const groups = splitGroups(inputText);
   return groups.map(group => {
-    // Apply sound changes to each word in the group
-    const changedGroup = group.map(word => {
+    // Separate affixes and roots
+    const parsedGroup = group.map(word => parseAffixBrackets(word));
+    // Reconstruct roots and affixes separately
+    const rootWords = parsedGroup.map(p => p.root);
+    const prefixGroups = parsedGroup.map(p => p.prefixes.join(''));
+    const suffixGroups = parsedGroup.map(p => p.suffixes.join(''));
+
+    // Apply sound changes to roots
+    const changedRoots = rootWords.map(word => {
       let tokens = tokenizeIPA(word, options);
       tokens = applySoundChanges(tokens);
       return tokens.join('');
     });
 
-    let recon;
+    // Apply sound changes to affixes (optional, can be skipped or handled separately)
+    const changedPrefixes = prefixGroups.map(word => {
+      let tokens = tokenizeIPA(word, options);
+      tokens = applySoundChanges(tokens);
+      return tokens.join('');
+    });
+    const changedSuffixes = suffixGroups.map(word => {
+      let tokens = tokenizeIPA(word, options);
+      tokens = applySoundChanges(tokens);
+      return tokens.join('');
+    });
+
+    // Reconstruct proto root
+    let reconRoot;
     if (options.method === "weighted") {
-      recon = weightedReconstruction(changedGroup, options);
+      reconRoot = weightedReconstruction(changedRoots, options);
+    } else if (options.method === "comparative") {
+      reconRoot = comparativeReconstruction(changedRoots, options);
     } else {
-      recon = reconstructProto(changedGroup, options);
+      reconRoot = reconstructProto(changedRoots, options);
     }
-    const conservative = highlightConservative(changedGroup, recon);
-    return { reconstructions: recon, conservative, group: changedGroup };
+    const conservativeRoot = highlightConservative(changedRoots, reconRoot);
+
+    // Reconstruct proto affixes (optional, can use same method)
+    let reconPrefix = prefixGroups[0] ? reconstructProto(changedPrefixes, options) : [];
+    let reconSuffix = suffixGroups[0] ? reconstructProto(changedSuffixes, options) : [];
+
+    return {
+      reconstructions: reconRoot,
+      conservative: conservativeRoot,
+      group: changedRoots,
+      prefixes: reconPrefix,
+      suffixes: reconSuffix
+    };
   });
 }
+
 
 let soundChanges = [];
 
@@ -436,17 +505,21 @@ document.addEventListener("DOMContentLoaded", () => {
     const results = processInput(inputText, options);
     outputDiv.innerHTML = "";
     results.forEach((res, index) => {
-      const groupDiv = document.createElement("div");
-      groupDiv.className = "result-group";
-      const groupTitle = document.createElement("strong");
-      groupTitle.textContent = `Group ${index + 1}`;
-      groupDiv.appendChild(groupTitle);
-      const ul = document.createElement("ul");
-      res.reconstructions.forEach(form => {
-        const li = document.createElement("li");
-        li.textContent = form + (form === res.conservative ? " (most conservative)" : "");
-        ul.appendChild(li);
-      });
+        const groupDiv = document.createElement("div");
+        groupDiv.className = "result-group";
+        const groupTitle = document.createElement("strong");
+        groupTitle.textContent = `Group ${index + 1}`;
+        groupDiv.appendChild(groupTitle);
+        const ul = document.createElement("ul");
+        res.reconstructions.forEach(form => {
+      let affixForm = '';
+      if (res.prefixes.length && res.prefixes[0]) affixForm += `[${res.prefixes.join('/')}]`;
+      affixForm += form;
+      if (res.suffixes.length && res.suffixes[0]) affixForm += `[${res.suffixes.join('/')}]`;
+      const li = document.createElement("li");
+      li.textContent = affixForm + (form === res.conservative ? " (most conservative)" : "");
+      ul.appendChild(li);
+    });
       groupDiv.appendChild(ul);
       const { clusters, intermediates } = guessIntermediates(res.conservative, res.group);
       let diagramCode = 'flowchart TD\n';
@@ -457,8 +530,27 @@ document.addEventListener("DOMContentLoaded", () => {
         let interNode = `I${i}["${interpolated}"]`;
         diagramCode += `${protoNode} --> ${interNode}\n`;
         clusters[i].forEach((desc, j) => {
-          let descNode = `D${i}_${j}["${desc}"]`;
-          diagramCode += `${interNode} --> ${descNode}\n`;
+          // --- Realistic sound change path tracing ---
+          const path = traceSoundChangePath(interpolated, desc, soundChanges);
+          // Use unique node names for each step
+          let prevNode = interNode;
+          for (let s = 1; s < path.length; s++) {
+            let nodeName = `N${i}_${j}_${s}`;
+            let label = path[s];
+            diagramCode += `${prevNode} --> ${nodeName}["${label}"]\n`;
+            // Annotate edge only if a sound change occurred
+            if (path[s] !== path[s - 1]) {
+              // Find which rule applied
+              let rule = soundChanges.find(r => path[s - 1].includes(r.from) && path[s].includes(r.to));
+              if (rule) {
+                diagramCode = diagramCode.replace(
+                  `${prevNode} --> ${nodeName}["${label}"]\n`,
+                  `${prevNode} -->|${rule.from}→${rule.to}| ${nodeName}["${label}"]\n`
+                );
+              }
+            }
+            prevNode = nodeName;
+          }
         });
       });
       const diagramDiv = document.createElement("div");
@@ -697,6 +789,18 @@ if (enableUserSoundChanges) {
   soundChanges = window.algorithmSoundChanges || [];
 }
 
+function parseAffixBrackets(word) {
+  // Returns {prefixes: [], root: '', suffixes: []}
+  let prefixMatches = [...word.matchAll(/^\[([^\]]+)\]/g)].map(m => m[1]);
+  let suffixMatches = [...word.matchAll(/\[([^\]]+)\]$/g)].map(m => m[1]);
+  let root = word.replace(/^\[[^\]]+\]/, '').replace(/\[[^\]]+\]$/, '');
+  return {
+    prefixes: prefixMatches,
+    root,
+    suffixes: suffixMatches
+  };
+}
+
 function findRegularCorrespondences(groups) {
   // groups: Array of arrays of descendant words (already tokenized and aligned)
   // Example: [["k","y","n"], ["tʃ","o","ŋ"], ["k","u","n"]]
@@ -712,4 +816,33 @@ function findRegularCorrespondences(groups) {
     correspondences[key] = (correspondences[key] || 0) + 1;
   }
   return correspondences;
+}
+
+function traceSoundChangePath(proto, descendant, soundChanges) {
+  let steps = [proto];
+  let current = proto;
+  for (const rule of soundChanges) {
+    let tokens = tokenizeIPA(current);
+    let changed = false;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === rule.from) {
+        // Check environment as in applySoundChanges
+        let envOk = true;
+        if (rule.env) {
+          // ...environment logic...
+        }
+        if (envOk && Math.random() < rule.chance) {
+          tokens[i] = rule.to;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      current = tokens.join('');
+      steps.push(current);
+    }
+  }
+  // Final step: descendant
+  if (current !== descendant) steps.push(descendant);
+  return steps;
 }
