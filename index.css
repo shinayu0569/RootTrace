@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+  --accent: #4a90e2;
+  --accent-light: #e3f0fc;
+  --bg: #f7f9fb;
+  --card-bg: #ffffff;
+  --border: #e0e6ed;
+  --text: #222222;
+  --muted: #737373;
+  --input-bg: #f5f7fa;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --shadow: 0 2px 12px 0 rgba(74, 144, 226, 0.07);
+}
+
+.dark {
+  --accent: #5ba1f2;
+  --accent-light: #1a2b3c;
+  --bg: #15181c;
+  --card-bg: #1d2127;
+  --border: #2d333b;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --input-bg: #0d1013;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --error: #f87171;
+  --shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.4);
+}
+
+body {
+  font-family: 'Noto Sans', 'Noto Sans Symbols', sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.ipa-font {
+  font-family: 'Noto Sans', 'Noto Sans Symbols', sans-serif;
+}
+
+@theme {
+  --color-rt-accent: var(--accent);
+  --color-rt-accent-light: var(--accent-light);
+  --color-rt-bg: var(--bg);
+  --color-rt-card: var(--card-bg);
+  --color-rt-border: var(--border);
+  --color-rt-text: var(--text);
+  --color-rt-muted: var(--muted);
+  --color-rt-input: var(--input-bg);
+  --color-rt-success: var(--success);
+  --color-rt-warning: var(--warning);
+  --color-rt-error: var(--error);
+  --font-sans: "Noto Sans", "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Noto Sans Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Libre Baskerville", ui-serif, Georgia, serif;
+}
