@@ -2,6 +2,7 @@ import { findPairwiseSoundChanges } from './engine';
 import { generalizeSoundChanges } from './generalizer';
 import { applyShifts } from './soundShifter';
 import { SoundChangeNote } from '../types';
+import { GoogleGenAI, Type } from "@google/genai";
 
 export interface EvolverStep {
   stepName: string;
@@ -21,6 +22,97 @@ export interface EvolverEdgeResult {
   sourceName: string;
   targetName: string;
   steps: EvolverStep[];
+}
+
+export async function autoEvolveEdge(
+  sourceName: string,
+  targetName: string,
+  sourceWords: string[],
+  targetWords: string[],
+  subStages: number,
+  apiKey: string
+): Promise<EvolverStep[]> {
+  if (!apiKey) {
+    throw new Error("API Key is required for Auto-Evolve.");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const prompt = `
+    You are a computational historical linguist. 
+    Analyze the evolution from ${sourceName} to ${targetName}.
+    
+    Source Words (${sourceName}):
+    ${sourceWords.join(', ')}
+    
+    Target Words (${targetName}):
+    ${targetWords.join(', ')}
+    
+    Task:
+    1. Identify the regular sound laws that transformed the source words into the target words.
+    2. If subStages is ${subStages} > 0, hypothesize ${subStages} intermediate stages with their own names and sound laws.
+    3. For each word, list the specific changes it underwent.
+    4. Format the output as a JSON array of EvolverStep objects.
+    
+    EvolverStep Schema:
+    {
+      "stepName": string,
+      "soundLaws": string[],
+      "exceptions": string[],
+      "sporadicShifts": string[],
+      "words": [
+        {
+          "ancestor": string,
+          "result": string,
+          "changes": string[]
+        }
+      ]
+    }
+    
+    Return ONLY the JSON array.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            stepName: { type: Type.STRING },
+            soundLaws: { type: Type.ARRAY, items: { type: Type.STRING } },
+            exceptions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            sporadicShifts: { type: Type.ARRAY, items: { type: Type.STRING } },
+            words: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  ancestor: { type: Type.STRING },
+                  result: { type: Type.STRING },
+                  changes: { type: Type.ARRAY, items: { type: Type.STRING } }
+                },
+                required: ["ancestor", "result", "changes"]
+              }
+            }
+          },
+          required: ["stepName", "soundLaws", "words"]
+        }
+      }
+    }
+  });
+
+  try {
+    const text = response.text;
+    if (!text) throw new Error("Empty response from AI");
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Failed to parse AI response:", e);
+    throw new Error("The AI returned an invalid evolution model. Please try again.");
+  }
 }
 
 export async function algorithmicEvolveEdge(

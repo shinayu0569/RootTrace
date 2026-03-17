@@ -506,7 +506,7 @@ const INITIAL_EVOLVER_DATA: EvolverNode = {
 export default function App() {
   const [inputs, setInputs] = useState<LanguageInput[]>(INITIAL_DATA);
   const [result, setResult] = useState<ReconstructionResult | null>(null);
-  const [method, setMethod] = useState<ReconstructionMethod>(ReconstructionMethod.BAYESIAN_MCMC);
+  const [method, setMethod] = useState<ReconstructionMethod>(ReconstructionMethod.BAYESIAN_AI);
   const [isProcessing, setIsProcessing] = useState(false);
   const [inspectedCol, setInspectedCol] = useState<number | null>(null);
   
@@ -534,6 +534,12 @@ export default function App() {
   const [evolverResults, setEvolverResults] = useState<EvolverEdgeResult[]>([]);
   const [isEvolving, setIsEvolving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  // New Auto-Evolver settings
+  const [evolverMode, setEvolverMode] = useState<'ai' | 'algorithmic'>('ai');
+  const [evolverApiKey, setEvolverApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [algorithmicMethod, setAlgorithmicMethod] = useState<'bayesian' | 'medoid'>('bayesian');
 
   useEffect(() => {
     if (appMode === 'shift') {
@@ -678,6 +684,11 @@ export default function App() {
   };
 
   const runEvolver = async () => {
+    if (evolverMode === 'ai' && !evolverApiKey.trim()) {
+      setErrorMsg("Please enter your AI API Key to use the AI-Powered Auto-Evolver.");
+      return;
+    }
+
     setIsEvolving(true);
     setErrorMsg(null);
     setEvolverResults([]);
@@ -690,7 +701,12 @@ export default function App() {
         const targetWords = desc.wordsText.split('\n').map(w => w.trim()).filter(w => w);
         
         try {
-          let steps = await algorithmicEvolveEdge(node.name, desc.name, sourceWords, targetWords, desc.subStages);
+          let steps;
+          if (evolverMode === 'algorithmic') {
+            throw new Error("Algorithmic mode is currently a Work In Progress and is disabled.");
+          } else {
+            steps = await autoEvolveEdge(node.name, desc.name, sourceWords, targetWords, desc.subStages, evolverApiKey);
+          }
           results.push({
             sourceId: node.id,
             targetId: desc.id,
@@ -859,7 +875,7 @@ export default function App() {
             onChange={e => setMethod(e.target.value as ReconstructionMethod)}
             className="bg-rt-input border border-rt-border text-sm rounded-xl p-3 text-rt-text outline-none focus:ring-2 ring-rt-accent/50 transition-all cursor-pointer"
           >
-            <option value={ReconstructionMethod.BAYESIAN_MCMC}>Bayesian (Recommended)</option>
+            <option value={ReconstructionMethod.BAYESIAN_AI}>Bayesian (Recommended)</option>
             <option value={ReconstructionMethod.FEATURE_WEIGHTED}>Medoid (Heuristic)</option>
           </select>
           <button 
@@ -1316,8 +1332,69 @@ export default function App() {
               </button>
             </div>
             <p className="text-xs text-rt-muted mb-6 leading-relaxed">
-              Define the stages of your language. Input words for each stage, and the algorithm will infer the sound laws that occurred between them, generating intermediate sub-stages if requested.
+              Define the stages of your language. Input words for each stage, and the AI will infer the sound laws that occurred between them, generating intermediate sub-stages if requested.
             </p>
+
+            <div className="mb-6 p-4 bg-rt-input border border-rt-border rounded-2xl flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black uppercase tracking-widest text-rt-muted">Execution Mode</span>
+                <div className="flex bg-rt-bg rounded-lg p-1 border border-rt-border">
+                  <button 
+                    disabled
+                    className="px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-md transition-all text-rt-muted opacity-50 cursor-not-allowed flex items-center gap-1.5"
+                    title="Algorithmic Auto-Evolver is currently a Work In Progress"
+                  >
+                    Algorithmic
+                    <span className="bg-rt-warning/20 text-rt-warning text-[8px] px-1 rounded leading-tight">WIP</span>
+                  </button>
+                  <button 
+                    onClick={() => setEvolverMode('ai')}
+                    className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-md transition-all ${evolverMode === 'ai' ? 'bg-rt-accent text-white shadow-sm' : 'text-rt-muted hover:text-rt-text'}`}
+                  >
+                    AI-Powered
+                  </button>
+                </div>
+              </div>
+
+              {evolverMode === 'algorithmic' ? (
+                <div className="flex flex-col gap-2 animate-in fade-in">
+                  <span className="text-xs font-black uppercase tracking-widest text-rt-muted">Method</span>
+                  <select 
+                    value={algorithmicMethod}
+                    onChange={e => setAlgorithmicMethod(e.target.value as 'bayesian' | 'medoid')}
+                    className="w-full bg-rt-input border border-rt-border rounded-lg px-3 py-2 text-xs outline-none focus:border-rt-accent text-rt-text"
+                  >
+                    <option value="bayesian">Bayesian</option>
+                    <option value="medoid">Medoid</option>
+                  </select>
+                  <p className="text-[10px] text-rt-muted mt-1 italic">
+                    Algorithmic mode uses statistical thresholding to identify regular laws, exceptions, and sporadic shifts.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 animate-in fade-in">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black uppercase tracking-widest text-rt-muted">AI API Key</span>
+                    <button 
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="text-[10px] text-rt-accent hover:underline"
+                    >
+                      {showApiKey ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                  <input 
+                    type={showApiKey ? "text" : "password"}
+                    value={evolverApiKey}
+                    onChange={e => setEvolverApiKey(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-rt-input border border-rt-border rounded-lg px-3 py-2 text-xs outline-none focus:border-rt-accent text-rt-text font-mono"
+                  />
+                  <p className="text-[9px] text-rt-muted mt-1">
+                    Your key is only used locally in your browser and is never stored on any server.
+                  </p>
+                </div>
+              )}
+            </div>
 
             <div className="flex flex-col gap-2">
               <EvolverInputNode 

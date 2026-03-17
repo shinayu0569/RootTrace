@@ -283,18 +283,10 @@ const PHONETIC_PRIOR: Record<string, number> = {
  * Heuristic to detect common "natural" sound changes given a context.
  * Returns a score bonus (reducing penalty) if the change p -> reflex is natural in this environment.
  */
-const naturalChangeBonusCache: Record<string, number> = {};
-
 const getNaturalChangeBonus = (p: string, reflex: string, left: string | null, right: string | null): number => {
-  const cacheKey = `${p}|${reflex}|${left}|${right}`;
-  if (naturalChangeBonusCache[cacheKey] !== undefined) return naturalChangeBonusCache[cacheKey];
-
   const fP = getEffectiveFeatures(p);
   const fR = getEffectiveFeatures(reflex);
-  if (!fP || !fR) {
-    naturalChangeBonusCache[cacheKey] = 0;
-    return 0;
-  }
+  if (!fP || !fR) return 0;
 
   let bonus = 0;
 
@@ -411,7 +403,6 @@ const getNaturalChangeBonus = (p: string, reflex: string, left: string | null, r
     }
   }
 
-  naturalChangeBonusCache[cacheKey] = bonus;
   return bonus;
 };
 
@@ -472,8 +463,6 @@ const solveMedoid = (matrix: string[][], colIdx: number, params: ReconstructionP
   return { char: bestChar, dist };
 };
 
-const globalNeighborsMap: Record<string, string[]> = {};
-
 const solveMCMC = (matrix: string[][], colIdx: number, params: ReconstructionParams, languageWeights?: number[]): { char: string, dist: { [key: string]: number } } => {
   const column = matrix.map(row => row[colIdx]);
   const validReflexes = column.filter(c => c !== GAP_CHAR);
@@ -485,19 +474,12 @@ const solveMCMC = (matrix: string[][], colIdx: number, params: ReconstructionPar
   
   const neighborsMap: Record<string, string[]> = {};
   universe.forEach(u => {
-    if (!globalNeighborsMap[u]) {
-      globalNeighborsMap[u] = Object.keys(FEATURE_MAP).filter(v => getPhoneticDistance(u, v, params.gapPenalty, params.unknownCharPenalty) <= 2.5 && v !== u);
-    }
-    // Also check against uniqueTokens that might not be in FEATURE_MAP
-    const extraNeighbors = uniqueTokens.filter(v => !FEATURE_MAP[v] && getPhoneticDistance(u, v, params.gapPenalty, params.unknownCharPenalty) <= 2.5 && v !== u);
-    neighborsMap[u] = [...globalNeighborsMap[u].filter(v => universe.includes(v)), ...extraNeighbors];
+    neighborsMap[u] = universe.filter(v => getPhoneticDistance(u, v, params.gapPenalty, params.unknownCharPenalty) <= 2.5 && v !== u);
   });
   
   let current = validReflexes[Math.floor(Math.random() * validReflexes.length)];
   
-  const logPosteriorMap: Record<string, number> = {};
   const getLogPosterior = (p: string) => {
-    if (logPosteriorMap[p] !== undefined) return logPosteriorMap[p];
     let logP = Math.log(PHONETIC_PRIOR[p] || 0.4);
     for (let langIdx = 0; langIdx < matrix.length; langIdx++) {
       const weight = languageWeights ? languageWeights[langIdx] : 1.0;
@@ -513,7 +495,6 @@ const solveMCMC = (matrix: string[][], colIdx: number, params: ReconstructionPar
         logP -= (Math.max(0, d - bonus) * 1.1) * weight;
       }
     }
-    logPosteriorMap[p] = logP;
     return logP;
   };
 

@@ -303,11 +303,7 @@ const STRIP_REGEX = new RegExp(`[${combiningRange}${spacingModifierRange}${toneL
 /**
  * Computes the effective features of a phoneme segment (Base + Diacritics).
  */
-const effectiveFeaturesCache: Record<string, DistinctiveFeatures | null> = {};
-
 export const getEffectiveFeatures = (token: string): DistinctiveFeatures | null => {
-  if (effectiveFeaturesCache[token] !== undefined) return effectiveFeaturesCache[token];
-
   // 1. Identify Base Character
   // Remove all known modifiers to find the base
   const baseChar = token.replace(STRIP_REGEX, '');
@@ -338,19 +334,13 @@ export const getEffectiveFeatures = (token: string): DistinctiveFeatures | null 
     features.stress = true;
   }
 
-  effectiveFeaturesCache[token] = features;
   return features;
 };
 
 // Calculate phonetic distance using Hamming Distance of features
-const phoneticDistanceCache: Record<string, number> = {};
-
 export const getPhoneticDistance = (charA: string, charB: string, gapPenalty: number = 10, unknownCharPenalty: number = 8): number => {
   if (charA === charB) return 0;
   if (charA === GAP_CHAR || charB === GAP_CHAR) return gapPenalty;
-
-  const cacheKey = `${charA}|${charB}|${gapPenalty}|${unknownCharPenalty}`;
-  if (phoneticDistanceCache[cacheKey] !== undefined) return phoneticDistanceCache[cacheKey];
 
   // Explicitly handle syllable boundaries to prevent aligning them with segments
   if (charA === '.' || charB === '.' || charA === ',' || charB === ',') return BOUNDARY_PENALTY;
@@ -383,7 +373,6 @@ export const getPhoneticDistance = (charA: string, charB: string, gapPenalty: nu
     }
   }
 
-  phoneticDistanceCache[cacheKey] = distance;
   return distance;
 };
 
@@ -575,41 +564,30 @@ export const describeFeatures = (char: string): string => {
   return parts.join(" ");
 };
 
-const naturalnessCache: Record<string, { score: number, category: string }> = {};
-
 export const evaluateNaturalness = (
   pChar: string, 
   rChar: string, 
   leftEnv: string | null, 
   rightEnv: string | null
 ): { score: number, category: string } => {
-  const cacheKey = `${pChar}|${rChar}|${leftEnv}|${rightEnv}`;
-  if (naturalnessCache[cacheKey]) return naturalnessCache[cacheKey];
+  if (pChar === GAP_CHAR || rChar === GAP_CHAR) {
+      return { score: 0.5, category: 'Other' }; // Epenthesis/Deletion
+  }
 
-  const compute = () => {
-    if (pChar === GAP_CHAR || rChar === GAP_CHAR) {
-        return { score: 0.5, category: 'Other' }; // Epenthesis/Deletion
-    }
+  const pFeat = getEffectiveFeatures(pChar);
+  const rFeat = getEffectiveFeatures(rChar);
+  
+  if (!pFeat || !rFeat) return { score: 0.01, category: 'Other' };
 
-    const pFeat = getEffectiveFeatures(pChar);
-    const rFeat = getEffectiveFeatures(rChar);
-    
-    if (!pFeat || !rFeat) return { score: 0.01, category: 'Other' };
+  const leftFeat = leftEnv && leftEnv !== GAP_CHAR ? getEffectiveFeatures(leftEnv) : null;
+  const rightFeat = rightEnv && rightEnv !== GAP_CHAR ? getEffectiveFeatures(rightEnv) : null;
 
-    const leftFeat = leftEnv && leftEnv !== GAP_CHAR ? getEffectiveFeatures(leftEnv) : null;
-    const rightFeat = rightEnv && rightEnv !== GAP_CHAR ? getEffectiveFeatures(rightEnv) : null;
+  const typology = scoreFeatureTransition(pFeat, rFeat, leftFeat, rightFeat);
+  if (typology) {
+    return { score: typology.probability, category: typology.name };
+  }
 
-    const typology = scoreFeatureTransition(pFeat, rFeat, leftFeat, rightFeat);
-    if (typology) {
-      return { score: typology.probability, category: typology.name };
-    }
-
-    // Fallback to basic feature distance penalty
-    const distance = getPhoneticDistance(pChar, rChar);
-    return { score: Math.max(0.01, 1 - (distance / 10)), category: 'Other' };
-  };
-
-  const result = compute();
-  naturalnessCache[cacheKey] = result;
-  return result;
+  // Fallback to basic feature distance penalty
+  const distance = getPhoneticDistance(pChar, rChar);
+  return { score: Math.max(0.01, 1 - (distance / 10)), category: 'Other' };
 };
