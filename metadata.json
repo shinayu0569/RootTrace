@@ -1,0 +1,5 @@
+{
+  "name": "RootTrace",
+  "description": "The ultimate overhaul of the original RootTrace. A sophisticated, probabilistic linguistic reconstruction engine featuring Bayesian MCMC reconstruction, phylogenetic tree support, and automated sound law induction.",
+  "requestFramePermissions": []
+}
