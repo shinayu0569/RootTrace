@@ -119,5 +119,6 @@ export interface EvolverNode {
 
 export enum ReconstructionMethod {
   FEATURE_WEIGHTED = 'FEATURE_WEIGHTED',
-  BAYESIAN_MCMC = 'BAYESIAN_MCMC'
+  BAYESIAN_MCMC = 'BAYESIAN_MCMC',
+  BAYESIAN_AI = 'BAYESIAN_AI'
 }
