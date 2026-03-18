@@ -55,6 +55,32 @@ export const FEATURE_MAP: Record<string, DistinctiveFeatures> = {
   'Ɂ': f({ consonantal: true, constrictedGlottis: true }), // Alternative glottal stop
   'ʡ': f({ consonantal: true, constrictedGlottis: true }), // Epiglottal stop
   'Q': f({ consonantal: true, constrictedGlottis: true }), // Alternative epiglottal stop
+  'kʷ': f({ consonantal: true, dorsal: true, high: true, back: true, round: true, labial: true }),
+  'gʷ': f({ consonantal: true, dorsal: true, high: true, back: true, voice: true, round: true, labial: true }),
+  'qʷ': f({ consonantal: true, dorsal: true, back: true, round: true, labial: true }),
+  'ɢʷ': f({ consonantal: true, dorsal: true, back: true, voice: true, round: true, labial: true }),
+  'pʲ': f({ consonantal: true, labial: true, high: true, dorsal: true }),
+  'bʲ': f({ consonantal: true, labial: true, voice: true, high: true, dorsal: true }),
+  'tʲ': f({ consonantal: true, coronal: true, high: true, dorsal: true }),
+  'dʲ': f({ consonantal: true, coronal: true, voice: true, high: true, dorsal: true }),
+  'kʲ': f({ consonantal: true, dorsal: true, high: true, back: true }), // redundant but explicit
+  'gʲ': f({ consonantal: true, dorsal: true, high: true, back: true, voice: true }),
+  'kʷʲ': f({ consonantal: true, dorsal: true, high: true, back: true, round: true, labial: true }),
+  'gʷʲ': f({ consonantal: true, dorsal: true, high: true, back: true, voice: true, round: true, labial: true }),
+  'pʰ': f({ consonantal: true, labial: true, spreadGlottis: true }),
+  'bʱ': f({ consonantal: true, labial: true, voice: true, spreadGlottis: true }),
+  'tʰ': f({ consonantal: true, coronal: true, spreadGlottis: true }),
+  'dʱ': f({ consonantal: true, coronal: true, voice: true, spreadGlottis: true }),
+  'kʰ': f({ consonantal: true, dorsal: true, high: true, back: true, spreadGlottis: true }),
+  'gʱ': f({ consonantal: true, dorsal: true, high: true, back: true, voice: true, spreadGlottis: true }),
+  'qʰ': f({ consonantal: true, dorsal: true, back: true, spreadGlottis: true }),
+  'ɢʱ': f({ consonantal: true, dorsal: true, back: true, voice: true, spreadGlottis: true }),
+  'pʼ': f({ consonantal: true, labial: true, constrictedGlottis: true }),
+  'tʼ': f({ consonantal: true, coronal: true, constrictedGlottis: true }),
+  'kʼ': f({ consonantal: true, dorsal: true, high: true, back: true, constrictedGlottis: true }),
+  'qʼ': f({ consonantal: true, dorsal: true, back: true, constrictedGlottis: true }),
+  'sʼ': f({ consonantal: true, continuant: true, coronal: true, strident: true, constrictedGlottis: true }),
+  'fʼ': f({ consonantal: true, continuant: true, labial: true, strident: true, constrictedGlottis: true }),
 
   // --- IMPLOSIVES ---
   'ɓ': f({ consonantal: true, labial: true, voice: true, constrictedGlottis: true }),
@@ -337,7 +363,7 @@ export const getEffectiveFeatures = (token: string): DistinctiveFeatures | null 
   return features;
 };
 
-// Calculate phonetic distance using Hamming Distance of features
+// Calculate phonetic distance using Weighted Hamming Distance of features
 export const getPhoneticDistance = (charA: string, charB: string, gapPenalty: number = 10, unknownCharPenalty: number = 8): number => {
   if (charA === charB) return 0;
   if (charA === GAP_CHAR || charB === GAP_CHAR) return gapPenalty;
@@ -351,24 +377,55 @@ export const getPhoneticDistance = (charA: string, charB: string, gapPenalty: nu
   if (!fA || !fB) return unknownCharPenalty;
 
   let distance = 0;
+  
+  // Weights for different feature classes (Goal 2)
+  const weights: Record<keyof DistinctiveFeatures, number> = {
+    // Major Class (Prerequisite for everything)
+    syllabic: 4.0,
+    consonantal: 4.0,
+    sonorant: 3.0,
+    
+    // Manner (High weight)
+    continuant: 2.5,
+    nasal: 2.5,
+    lateral: 2.0,
+    delayedRelease: 2.0,
+    strident: 1.5,
+    
+    // Place (High weight)
+    labial: 2.5,
+    coronal: 2.5,
+    dorsal: 2.5,
+    
+    // Laryngeal (Medium weight)
+    voice: 2.0,
+    spreadGlottis: 1.5,
+    constrictedGlottis: 1.5,
+    
+    // Vowel Specifics (Medium weight)
+    high: 1.5,
+    low: 1.5,
+    back: 1.5,
+    round: 1.5,
+    tense: 1.0,
+    
+    // Suprasegmentals (Low weight)
+    long: 0.8,
+    stress: 0.5,
+    tone: 0.5
+  };
+
   const keys = Object.keys(fA) as (keyof DistinctiveFeatures)[];
   
   for (const key of keys) {
+    const weight = weights[key] || 1.0;
+    
     // Handle tone numerically
     if (key === 'tone') {
-       distance += Math.abs(fA.tone - fB.tone) * 0.5; // Scale tone diff
+       distance += Math.abs(fA.tone - fB.tone) * weight;
     } else {
       if (fA[key] !== fB[key]) {
-        // Weight major class features more heavily
-        if (key === 'syllabic' || key === 'consonantal' || key === 'sonorant') {
-          distance += 2.5; 
-        } else if (key === 'stress') {
-          distance += 0.5; // Stress mismatch is minor
-        } else if (key === 'long') {
-          distance += 0.8; // Length mismatch
-        } else {
-          distance += 1.0;
-        }
+        distance += weight;
       }
     }
   }
@@ -562,6 +619,29 @@ export const describeFeatures = (char: string): string => {
   else if (f.consonantal) parts.push("Consonant");
   
   return parts.join(" ");
+};
+
+/**
+ * Returns all phonemes in the FEATURE_MAP that match the given feature criteria.
+ */
+export const getPhonemesByFeatures = (criteria: Partial<DistinctiveFeatures>): string[] => {
+  return Object.keys(FEATURE_MAP).filter(symbol => {
+    const features = FEATURE_MAP[symbol];
+    return Object.entries(criteria).every(([key, value]) => {
+      return (features as any)[key] === value;
+    });
+  });
+};
+
+/**
+ * Checks if a phoneme matches a set of feature criteria.
+ */
+export const matchFeatures = (token: string, criteria: Partial<DistinctiveFeatures>): boolean => {
+  const features = getEffectiveFeatures(token);
+  if (!features) return false;
+  return Object.entries(criteria).every(([key, value]) => {
+    return (features as any)[key] === value;
+  });
 };
 
 export const evaluateNaturalness = (

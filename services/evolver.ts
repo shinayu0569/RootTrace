@@ -2,7 +2,35 @@ import { findPairwiseSoundChanges } from './engine';
 import { generalizeSoundChanges } from './generalizer';
 import { applyShifts } from './soundShifter';
 import { SoundChangeNote } from '../types';
-import { GoogleGenAI, Type } from "@google/genai";
+
+// Declare puter on window for TypeScript
+declare global {
+  interface Window {
+    puter: any;
+  }
+}
+
+const getPuter = async () => {
+  if (typeof window !== 'undefined' && window.puter) {
+    return window.puter;
+  }
+  // Wait for puter to load if it's not ready
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("Puter.js failed to load. Please check your internet connection."));
+    }, 10000); // 10s timeout
+
+    const check = () => {
+      if (window.puter) {
+        clearTimeout(timeout);
+        resolve(window.puter);
+      } else {
+        setTimeout(check, 100);
+      }
+    };
+    check();
+  });
+};
 
 export interface EvolverStep {
   stepName: string;
@@ -30,14 +58,9 @@ export async function autoEvolveEdge(
   sourceWords: string[],
   targetWords: string[],
   subStages: number,
-  apiKey: string
+  model: string = 'gpt-4o-mini'
 ): Promise<EvolverStep[]> {
-  if (!apiKey) {
-    throw new Error("API Key is required for Auto-Evolve.");
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
-
+  const puter = await getPuter();
   const prompt = `
     You are a computational historical linguist. 
     Analyze the evolution from ${sourceName} to ${targetName}.
@@ -69,46 +92,18 @@ export async function autoEvolveEdge(
       ]
     }
     
-    Return ONLY the JSON array.
+    Return ONLY the JSON array. Do not include any markdown formatting like \`\`\`json.
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            stepName: { type: Type.STRING },
-            soundLaws: { type: Type.ARRAY, items: { type: Type.STRING } },
-            exceptions: { type: Type.ARRAY, items: { type: Type.STRING } },
-            sporadicShifts: { type: Type.ARRAY, items: { type: Type.STRING } },
-            words: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  ancestor: { type: Type.STRING },
-                  result: { type: Type.STRING },
-                  changes: { type: Type.ARRAY, items: { type: Type.STRING } }
-                },
-                required: ["ancestor", "result", "changes"]
-              }
-            }
-          },
-          required: ["stepName", "soundLaws", "words"]
-        }
-      }
-    }
-  });
-
   try {
-    const text = response.text;
+    const response = await puter.ai.chat(prompt, { model });
+    const text = typeof response === 'string' ? response : (response as any).text || (response as any).message?.content;
+    
     if (!text) throw new Error("Empty response from AI");
-    return JSON.parse(text);
+    
+    // Clean up potential markdown formatting if the model ignored the instruction
+    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(jsonStr);
   } catch (e) {
     console.error("Failed to parse AI response:", e);
     throw new Error("The AI returned an invalid evolution model. Please try again.");

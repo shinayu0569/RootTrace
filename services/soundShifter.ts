@@ -1,3 +1,6 @@
+import { getPhonemesByFeatures, tokenizeIPA } from './phonetics';
+import { DistinctiveFeatures } from '../types';
+
 export interface ShiftResult {
   original: string;
   final: string;
@@ -16,6 +19,26 @@ export function applyShifts(words: string[], rulesText: string): ShiftResult[] {
     'V': 'a e i o u y æ œ ɑ ɒ ɔ ɛ ɪ ʊ ʌ ə'.split(' '),
     'C': 'p b t d k g q ɢ f v θ ð s z ʃ ʒ x ɣ h m n ɲ ŋ l r ɾ ɹ j w'.split(' '),
   };
+
+  // Pre-process feature-based classes
+  for (const line of lines) {
+    if (line.includes('[') && line.includes(']') && line.includes('=')) {
+      const [name, featureStr] = line.split('=');
+      const cleanName = name.trim();
+      const features: Partial<DistinctiveFeatures> = {};
+      
+      const featureParts = featureStr.match(/([+-])(\w+)/g);
+      if (featureParts) {
+        featureParts.forEach(part => {
+          const val = part.startsWith('+');
+          const key = part.slice(1) as keyof DistinctiveFeatures;
+          (features as any)[key] = val;
+        });
+        classes[cleanName] = getPhonemesByFeatures(features);
+      }
+      continue;
+    }
+  }
 
   const rules: { original: string, apply: (w: string) => string }[] = [];
 
