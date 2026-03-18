@@ -537,8 +537,7 @@ export default function App() {
   
   // New Auto-Evolver settings
   const [evolverMode, setEvolverMode] = useState<'ai' | 'algorithmic'>('ai');
-  const [evolverApiKey, setEvolverApiKey] = useState('');
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [evolverModel, setEvolverModel] = useState('gpt-4o-mini');
   const [algorithmicMethod, setAlgorithmicMethod] = useState<'bayesian' | 'medoid'>('bayesian');
 
   useEffect(() => {
@@ -684,11 +683,6 @@ export default function App() {
   };
 
   const runEvolver = async () => {
-    if (evolverMode === 'ai' && !evolverApiKey.trim()) {
-      setErrorMsg("Please enter your AI API Key to use the AI-Powered Auto-Evolver.");
-      return;
-    }
-
     setIsEvolving(true);
     setErrorMsg(null);
     setEvolverResults([]);
@@ -705,7 +699,7 @@ export default function App() {
           if (evolverMode === 'algorithmic') {
             throw new Error("Algorithmic mode is currently a Work In Progress and is disabled.");
           } else {
-            steps = await autoEvolveEdge(node.name, desc.name, sourceWords, targetWords, desc.subStages, evolverApiKey);
+            steps = await autoEvolveEdge(node.name, desc.name, sourceWords, targetWords, desc.subStages, evolverModel);
           }
           results.push({
             sourceId: node.id,
@@ -1373,24 +1367,25 @@ export default function App() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 animate-in fade-in">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-black uppercase tracking-widest text-rt-muted">AI API Key</span>
-                    <button 
-                      onClick={() => setShowApiKey(!showApiKey)}
-                      className="text-[10px] text-rt-accent hover:underline"
-                    >
-                      {showApiKey ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                  <input 
-                    type={showApiKey ? "text" : "password"}
-                    value={evolverApiKey}
-                    onChange={e => setEvolverApiKey(e.target.value)}
-                    placeholder="AIzaSy..."
-                    className="w-full bg-rt-input border border-rt-border rounded-lg px-3 py-2 text-xs outline-none focus:border-rt-accent text-rt-text font-mono"
-                  />
+                  <span className="text-xs font-black uppercase tracking-widest text-rt-muted">AI Model</span>
+                  <select 
+                    value={evolverModel}
+                    onChange={e => setEvolverModel(e.target.value)}
+                    className="w-full bg-rt-input border border-rt-border rounded-lg px-3 py-2 text-xs outline-none focus:border-rt-accent text-rt-text"
+                  >
+                    <optgroup label="OpenAI (via Puter)">
+                      <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
+                      <option value="gpt-4o">GPT-4o (Powerful)</option>
+                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                    </optgroup>
+                    <optgroup label="Perplexity (via Puter)">
+                      <option value="llama-3.1-70b-instruct">Llama 3.1 70B</option>
+                      <option value="sonar-small-online">Sonar Small (Online)</option>
+                      <option value="sonar-medium-online">Sonar Medium (Online)</option>
+                    </optgroup>
+                  </select>
                   <p className="text-[9px] text-rt-muted mt-1">
-                    Your key is only used locally in your browser and is never stored on any server.
+                    Powered by Puter.js. No API key required for free tier.
                   </p>
                 </div>
               )}
