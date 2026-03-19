@@ -17,22 +17,41 @@ export interface DistinctiveFeatures {
   lateral: boolean;      // Airflow around sides (l)
   delayedRelease: boolean; // Affricates
 
-  // Place Features
+  // Place Features (Primary nodes)
   labial: boolean;       // Lips (p, b, m, f)
   coronal: boolean;      // Tongue tip/blade (t, d, n, s)
   dorsal: boolean;       // Tongue body (k, g, vowels)
+  pharyngeal: boolean;   // Pharynx
+  laryngeal: boolean;    // Larynx
   
-  // Vowel/Dorsal Specifics
+  // Specific Place Features
+  alveolar: boolean;
+  palatal: boolean;
+  velar: boolean;
+  uvular: boolean;
+  glottal: boolean;
+  retroflex: boolean;
+
+  // Vowel Specifics
   high: boolean;
+  mid: boolean;
   low: boolean;
+  front: boolean;
+  central: boolean;
   back: boolean;
   round: boolean;
   tense: boolean;        // i vs ɪ
 
+  // Secondary Articulations
+  labialized: boolean;
+  palatalized: boolean;
+  velarized: boolean;
+  pharyngealized: boolean;
+
   // Suprasegmentals & Diacritics
   long: boolean;         // Length (ː)
   stress: boolean;       // Stress (ˈ, ˌ)
-  tone: number;          // 0: Neutral, >0 High/Rising, <0 Low/Falling (Generic representation)
+  tone: number;          // 0: Neutral, >0 High/Rising, <0 Low/Falling
 }
 
 export interface PhonemeDef {
