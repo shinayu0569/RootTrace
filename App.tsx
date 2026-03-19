@@ -3,9 +3,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Papa from 'papaparse';
 import { LanguageInput, ReconstructionMethod, ReconstructionResult, TreeNode, SoundChangeNote, EvolverNode } from './types';
 import { reconstructProtoWord } from './services/engine';
-import { GAP_CHAR, describeFeatures } from './services/phonetics';
-import { applyShifts, ShiftResult } from './services/soundShifter';
+import { GAP_CHAR, describeFeatures, getPhonemesByFeatures, matchFeatures } from './services/phonetics';
 import { autoEvolveEdge, algorithmicEvolveEdge, EvolverEdgeResult } from './services/evolver';
+import { phonemeDistance, nearestNeighbours } from './services/phonemeDistance';
+import { featureMatrix } from './services/featureMatrix';
+import { DistinctiveFeatures } from './types';
+import SoundChangeApplier from './src/components/SoundChangeApplier';
 
 const TutorialModal = ({ onClose }: { onClose: () => void }) => {
   return (
@@ -524,10 +527,15 @@ export default function App() {
   // Modes
   const [appMode, setAppMode] = useState<'reconstruct' | 'shift' | 'evolver'>('reconstruct');
   
-  // Sound Shift Creator state
-  const [shiftWords, setShiftWords] = useState<string>("pater\nmater\nfrater");
-  const [shiftRules, setShiftRules] = useState<string>("t > d / V_V\np > f / #_\nr > ɾ / V_V");
-  const [shiftResults, setShiftResults] = useState<ShiftResult[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  useEffect(() => {
+    const init = async () => {
+      await featureMatrix.init();
+      setIsInitialized(true);
+    };
+    init();
+  }, []);
 
   // Auto-Evolver state
   const [evolverData, setEvolverData] = useState<EvolverNode>(INITIAL_EVOLVER_DATA);
@@ -539,12 +547,6 @@ export default function App() {
   const [evolverMode, setEvolverMode] = useState<'ai' | 'algorithmic'>('ai');
   const [evolverModel, setEvolverModel] = useState('gpt-4o-mini');
   const [algorithmicMethod, setAlgorithmicMethod] = useState<'bayesian' | 'medoid'>('bayesian');
-
-  useEffect(() => {
-    if (appMode === 'shift') {
-      setShiftResults(applyShifts(shiftWords.split('\n'), shiftRules));
-    }
-  }, [shiftWords, shiftRules, appMode]);
 
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains('dark'));
@@ -838,25 +840,38 @@ export default function App() {
           <p className="text-rt-muted font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.3em] font-bold">Probabilistic Phonological Solver</p>
         </div>
         
-        <div className="flex flex-wrap justify-center gap-1 bg-rt-input p-1 rounded-xl border border-rt-border mx-auto md:mx-0 w-full md:w-auto">
-          <button 
-            onClick={() => setAppMode('reconstruct')}
-            className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${appMode === 'reconstruct' ? 'bg-rt-card text-rt-text shadow-sm' : 'text-rt-muted hover:text-rt-text'}`}
-          >
-            Proto-Reconstructor
-          </button>
-          <button 
-            onClick={() => setAppMode('shift')}
-            className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${appMode === 'shift' ? 'bg-rt-card text-rt-text shadow-sm' : 'text-rt-muted hover:text-rt-text'}`}
-          >
-            Sound Shift Creator
-          </button>
-          <button 
-            onClick={() => setAppMode('evolver')}
-            className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${appMode === 'evolver' ? 'bg-rt-card text-rt-text shadow-sm' : 'text-rt-muted hover:text-rt-text'}`}
-          >
-            Language Evolution
-          </button>
+        <div className="flex flex-col md:flex-row items-center gap-2 mx-auto md:mx-0 w-full md:w-auto">
+          <div className="md:hidden w-full">
+            <select
+              value={appMode}
+              onChange={(e) => setAppMode(e.target.value as any)}
+              className="w-full bg-rt-input border border-rt-border text-sm rounded-xl p-3 text-rt-text outline-none focus:ring-2 ring-rt-accent/50 transition-all cursor-pointer font-bold"
+            >
+              <option value="reconstruct">Proto-Reconstructor</option>
+              <option value="shift">RootTrace's SCA</option>
+              <option value="evolver">Language Evolution</option>
+            </select>
+          </div>
+          <div className="hidden md:flex flex-wrap justify-center gap-1 bg-rt-input p-1 rounded-xl border border-rt-border w-full md:w-auto">
+            <button 
+              onClick={() => setAppMode('reconstruct')}
+              className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${appMode === 'reconstruct' ? 'bg-rt-card text-rt-text shadow-sm' : 'text-rt-muted hover:text-rt-text'}`}
+            >
+              Proto-Reconstructor
+            </button>
+            <button 
+              onClick={() => setAppMode('shift')}
+              className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${appMode === 'shift' ? 'bg-rt-card text-rt-text shadow-sm' : 'text-rt-muted hover:text-rt-text'}`}
+            >
+              RootTrace's SCA
+            </button>
+            <button 
+              onClick={() => setAppMode('evolver')}
+              className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${appMode === 'evolver' ? 'bg-rt-card text-rt-text shadow-sm' : 'text-rt-muted hover:text-rt-text'}`}
+            >
+              Language Evolution
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4">
@@ -1242,73 +1257,9 @@ export default function App() {
       )}
 
       {appMode === 'shift' && (
-      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
-        <section className="lg:col-span-4 flex flex-col gap-6">
-          <div className="bg-rt-card border border-rt-border rounded-3xl p-6 shadow-sm flex flex-col gap-4">
-            <h2 className="text-xl font-serif font-bold text-rt-text">Lexicon</h2>
-            <p className="text-xs text-rt-muted">Enter words to evolve, one per line.</p>
-            <textarea 
-              value={shiftWords}
-              onChange={e => setShiftWords(e.target.value)}
-              className="w-full h-48 bg-rt-input border border-rt-border rounded-xl p-4 text-rt-text font-mono text-sm focus:ring-2 ring-rt-accent/50 outline-none resize-none custom-scrollbar"
-              placeholder="pater&#10;mater&#10;frater"
-            />
-          </div>
-          <div className="bg-rt-card border border-rt-border rounded-3xl p-6 shadow-sm flex flex-col gap-4">
-            <h2 className="text-xl font-serif font-bold text-rt-text">Sound Laws</h2>
-            <p className="text-xs text-rt-muted leading-relaxed">
-              Format: <code>target &gt; replacement / env // exception</code><br/>
-              Define classes: <code>stop = p t k</code> and use as <code>@stop</code><br/>
-              Use <code>V</code> for vowels, <code>C</code> for consonants, <code>#</code> for word boundaries.<br/>
-              Use sets: <code>{'{p,t,k} > {b,d,g}'}</code><br/>
-              Use regex repeaters in environment: <code>C+</code> or <code>V?</code>
-            </p>
-            <textarea 
-              value={shiftRules}
-              onChange={e => setShiftRules(e.target.value)}
-              className="w-full h-64 bg-rt-input border border-rt-border rounded-xl p-4 text-rt-text font-mono text-sm focus:ring-2 ring-rt-accent/50 outline-none resize-none custom-scrollbar"
-              placeholder="% Define classes&#10;stop = p t k&#10;fric = f θ x&#10;&#10;% Apply shifts&#10;@stop > @fric / V_V&#10;{a,o} > e / _C // _k&#10;∅ > i / C_C&#10;p > ∅ / _#"
-            />
-          </div>
-        </section>
-
-        <section className="lg:col-span-8">
-          <div className="bg-rt-card border border-rt-border rounded-3xl p-6 shadow-sm min-h-[500px]">
-            <h2 className="text-xl font-serif font-bold text-rt-text mb-6">Evolution Results</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-rt-border text-rt-muted text-xs uppercase tracking-wider">
-                    <th className="pb-3 font-bold">Proto-Word</th>
-                    <th className="pb-3 font-bold">Evolution Steps</th>
-                    <th className="pb-3 font-bold text-rt-accent">Modern Form</th>
-                  </tr>
-                </thead>
-                <tbody className="text-sm">
-                  {shiftResults.map((res, i) => (
-                    <tr key={i} className="border-b border-rt-border/50 hover:bg-rt-input/50 transition-colors">
-                      <td className="py-4 font-mono font-bold text-rt-text align-top">{res.original}</td>
-                      <td className="py-4 align-top">
-                        {res.history.length === 0 ? <span className="text-rt-muted italic text-xs">No changes</span> : (
-                          <div className="flex flex-col gap-1.5">
-                            {res.history.map((step, j) => (
-                              <div key={j} className="flex items-center gap-3 text-xs">
-                                <span className="text-rt-muted font-mono bg-rt-bg px-2 py-0.5 rounded border border-rt-border" title={step.rule}>{step.rule}</span>
-                                <span className="text-rt-text font-mono">→ {step.after}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-4 font-mono font-black text-rt-accent text-lg align-top">{res.final}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-      </main>
+        <main className="max-w-7xl mx-auto space-y-12 pb-20 animate-in">
+          <SoundChangeApplier />
+        </main>
       )}
 
       {appMode === 'evolver' && (
@@ -1376,12 +1327,13 @@ export default function App() {
                     <optgroup label="OpenAI (via Puter)">
                       <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
                       <option value="gpt-4o">GPT-4o (Powerful)</option>
-                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
                     </optgroup>
-                    <optgroup label="Perplexity (via Puter)">
-                      <option value="llama-3.1-70b-instruct">Llama 3.1 70B</option>
-                      <option value="sonar-small-online">Sonar Small (Online)</option>
-                      <option value="sonar-medium-online">Sonar Medium (Online)</option>
+                    <optgroup label="Anthropic (via Puter)">
+                      <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                    </optgroup>
+                    <optgroup label="DeepSeek (via Puter)">
+                      <option value="deepseek-chat">DeepSeek V3</option>
+                      <option value="deepseek-reasoner">DeepSeek R1</option>
                     </optgroup>
                   </select>
                   <p className="text-[9px] text-rt-muted mt-1">

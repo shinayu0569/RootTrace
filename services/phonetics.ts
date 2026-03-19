@@ -1,6 +1,8 @@
 
 import { DistinctiveFeatures } from '../types';
 import { scoreFeatureTransition } from './typologyMatrix';
+import { featureMatrix } from './featureMatrix';
+import { phonemeDistance } from './phonemeDistance';
 
 // Default "zero" features
 const BASE_FEATURES: DistinctiveFeatures = {
@@ -18,11 +20,26 @@ const BASE_FEATURES: DistinctiveFeatures = {
   labial: false,
   coronal: false,
   dorsal: false,
+  pharyngeal: false,
+  laryngeal: false,
+  alveolar: false,
+  palatal: false,
+  velar: false,
+  uvular: false,
+  glottal: false,
+  retroflex: false,
   high: false,
+  mid: false,
   low: false,
+  front: false,
+  central: false,
   back: false,
   round: false,
   tense: false,
+  labialized: false,
+  palatalized: false,
+  velarized: false,
+  pharyngealized: false,
   long: false,
   stress: false,
   tone: 0
@@ -34,24 +51,22 @@ const f = (overrides: Partial<DistinctiveFeatures>): DistinctiveFeatures => ({
   ...overrides,
 });
 
-// Comprehensive Feature Matrix for IPA Symbols
+// Comprehensive Feature Matrix for IPA Symbols (Fallback/Primary)
 export const FEATURE_MAP: Record<string, DistinctiveFeatures> = {
   // --- STOPS ---
   'p': f({ consonantal: true, labial: true }),
   'b': f({ consonantal: true, labial: true, voice: true }),
-  't': f({ consonantal: true, coronal: true }),
-  'd': f({ consonantal: true, coronal: true, voice: true }),
-  'ʈ': f({ consonantal: true, coronal: true, back: true }), // Retroflex
-  'ɖ': f({ consonantal: true, coronal: true, back: true, voice: true }),
-  'c': f({ consonantal: true, dorsal: true, high: true }), // Palatal
-  'ɟ': f({ consonantal: true, dorsal: true, high: true, voice: true }),
-  'ȶ': f({ consonantal: true, coronal: true, dorsal: true, high: true }), // Alveolo-palatal
-  'ȡ': f({ consonantal: true, coronal: true, dorsal: true, high: true, voice: true }),
-  'k': f({ consonantal: true, dorsal: true, high: true, back: true }),
-  'g': f({ consonantal: true, dorsal: true, high: true, back: true, voice: true }),
-  'q': f({ consonantal: true, dorsal: true, back: true }),
-  'ɢ': f({ consonantal: true, dorsal: true, back: true, voice: true }),
-  'ʔ': f({ consonantal: true, constrictedGlottis: true }),
+  't': f({ consonantal: true, coronal: true, alveolar: true }),
+  'd': f({ consonantal: true, coronal: true, voice: true, alveolar: true }),
+  'ʈ': f({ consonantal: true, coronal: true, retroflex: true }), // Retroflex
+  'ɖ': f({ consonantal: true, coronal: true, retroflex: true, voice: true }),
+  'c': f({ consonantal: true, dorsal: true, palatal: true, high: true, front: true }), // Palatal
+  'ɟ': f({ consonantal: true, dorsal: true, palatal: true, high: true, voice: true, front: true }),
+  'k': f({ consonantal: true, dorsal: true, velar: true, high: true, back: true }),
+  'g': f({ consonantal: true, dorsal: true, velar: true, high: true, back: true, voice: true }),
+  'q': f({ consonantal: true, dorsal: true, uvular: true, back: true }),
+  'ɢ': f({ consonantal: true, dorsal: true, uvular: true, back: true, voice: true }),
+  'ʔ': f({ consonantal: true, laryngeal: true, glottal: true, constrictedGlottis: true }),
   'Ɂ': f({ consonantal: true, constrictedGlottis: true }), // Alternative glottal stop
   'ʡ': f({ consonantal: true, constrictedGlottis: true }), // Epiglottal stop
   'Q': f({ consonantal: true, constrictedGlottis: true }), // Alternative epiglottal stop
@@ -176,48 +191,33 @@ export const FEATURE_MAP: Record<string, DistinctiveFeatures> = {
 
   // --- VOWELS ---
   // High
-  'i': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, voice: true, tense: true }),
-  'y': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, round: true, voice: true, tense: true }),
-  'ɨ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, voice: true }), // Central unrounded
-  'ʉ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, round: true, voice: true }), // Central rounded
-  'ï': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, voice: true }), // Central unrounded (alt)
-  'ÿ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, round: true, voice: true }), // Central rounded (alt)
-  'ü': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, round: true, voice: true, tense: true }), // Front rounded (alt)
+  'i': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, front: true, voice: true, tense: true }),
+  'y': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, front: true, round: true, voice: true, tense: true }),
+  'ɨ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, central: true, voice: true }), // Central unrounded
+  'ʉ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, central: true, round: true, voice: true }), // Central rounded
   'u': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, back: true, round: true, voice: true, tense: true }),
   'ɯ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, back: true, voice: true }),
   
   // Near-High
-  'ɪ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, voice: true }),
-  'ʏ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, round: true, voice: true }),
+  'ɪ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, front: true, voice: true }),
+  'ʏ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, front: true, round: true, voice: true }),
   'ʊ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, high: true, back: true, round: true, voice: true }),
 
   // Mid
-  'e': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, voice: true, tense: true }),
-  'ø': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, round: true, voice: true, tense: true }),
-  'ɘ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, voice: true, tense: true }), // Close-mid central unrounded
-  'ɵ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, round: true, voice: true }), // Close-mid central rounded
-  'ë': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, voice: true, tense: true }), // Mid central unrounded (alt)
-  'ö': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, round: true, voice: true, tense: true }), // Mid front rounded (alt)
-  'o': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, back: true, round: true, voice: true, tense: true }),
-  'ɤ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, back: true, voice: true, tense: true }),
-  'ə': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, voice: true }),
+  'e': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, mid: true, front: true, voice: true, tense: true }),
+  'ø': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, mid: true, front: true, round: true, voice: true, tense: true }),
+  'ə': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, mid: true, central: true, voice: true }),
+  'o': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, mid: true, back: true, round: true, voice: true, tense: true }),
+  'ɤ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, mid: true, back: true, voice: true, tense: true }),
 
   // Open-Mid
-  'ɛ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, voice: true }),
-  'œ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, round: true, voice: true }),
-  'ɜ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, voice: true }), // Open-mid central unrounded
-  'ɞ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, round: true, voice: true }), // Open-mid central rounded
-  'ɔ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, back: true, round: true, voice: true }),
-  'ʌ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, back: true, voice: true }),
+  'ɛ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, mid: true, front: true, voice: true }),
+  'ɔ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, mid: true, back: true, round: true, voice: true }),
 
   // Low
-  'æ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, voice: true }),
-  'a': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, voice: true }),
-  'ɶ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, round: true, voice: true }),
+  'æ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, front: true, voice: true }),
+  'a': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, central: true, voice: true }),
   'ɑ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, back: true, voice: true }),
-  'ɒ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, back: true, round: true, voice: true }),
-  'ɐ': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, voice: true }), // Near-open central
-  'ä': f({ syllabic: true, sonorant: true, continuant: true, dorsal: true, low: true, voice: true }), // Open central unrounded
 };
 
 // --- PILLAR 1: SONORITY SCALE ---
@@ -253,10 +253,10 @@ const DIACRITIC_MAP: Record<string, Partial<DistinctiveFeatures>> = {
   '\u02C0': { constrictedGlottis: true }, // Glottal stop letter ˀ
 
   // --- Secondary Articulation ---
-  '\u02B7': { round: true, labial: true }, // Superscript w ʷ
-  '\u02B2': { high: true, coronal: false, dorsal: true }, // Superscript j ʲ
-  '\u02E0': { back: true, dorsal: true }, // Superscript gamma ˠ
-  '\u02E4': { back: true, low: true, dorsal: true }, // Superscript pharyngeal ˤ
+  '\u02B7': { round: true, labial: true, labialized: true }, // Superscript w ʷ
+  '\u02B2': { high: true, front: true, dorsal: true, palatalized: true }, // Superscript j ʲ
+  '\u02E0': { back: true, dorsal: true, velarized: true }, // Superscript gamma ˠ
+  '\u02E4': { pharyngeal: true, pharyngealized: true }, // Superscript pharyngeal ˤ
   '\u0303': { nasal: true }, // Tilde (nasalized) ̃
   '\u207F': { nasal: true }, // Superscript n ⁿ
   '\u02E1': { lateral: true }, // Superscript l ˡ
@@ -316,12 +316,12 @@ export const GAP_PENALTY = 10;
 export const BOUNDARY_PENALTY = 20;
 
 // Regex Components for IPA Tokenization
-const baseRange = "a-zA-Z\\u00C0-\\u02AF\\u0370-\\u03FF\\u1D00-\\u1DBF\\u01C0-\\u01C3\\u0294\\u0295\\u02A1\\u02A2";
-const combiningRange = "\\u0300-\\u036F\\u1DC0-\\u1DFF\\u20D0-\\u20FF\\uFE20-\\uFE2F";
-const spacingModifierRange = "\\u02B0-\\u02FF\\u1D2C-\\u1D6A\\u2070-\\u209F\\u02D0\\u02D1";
-const toneLetters = "\\u02E5-\\u02EB\\uA700-\\uA71F";
-const stressMarks = "\\u02C8\\u02CC";
-const tieBars = "\\u0361\\u035C";
+export const baseRange = "a-zA-Z\\u00C0-\\u02AF\\u0370-\\u03FF\\u1D00-\\u1DBF\\u01C0-\\u01C3\\u0294\\u0295\\u02A1\\u02A2*";
+export const combiningRange = "\\u0300-\\u036F\\u1DC0-\\u1DFF\\u20D0-\\u20FF\\uFE20-\\uFE2F";
+export const spacingModifierRange = "\\u02B0-\\u02FF\\u1D2C-\\u1D6A\\u2070-\\u209F\\u02D0\\u02D1";
+export const toneLetters = "\\u02E5-\\u02EB\\uA700-\\uA71F";
+export const stressMarks = "\\u02C8\\u02CC";
+export const tieBars = "\\u0361\\u035C";
 
 // Combined regex for stripping diacritics to find base char
 const STRIP_REGEX = new RegExp(`[${combiningRange}${spacingModifierRange}${toneLetters}${stressMarks}]`, 'g');
@@ -336,13 +336,19 @@ export const getEffectiveFeatures = (token: string): DistinctiveFeatures | null 
   
   // 2. Get Base Features
   // Try exact match, then first char match (for ligatures like ts if not explicitly mapped)
-  let features = FEATURE_MAP[baseChar] ? { ...FEATURE_MAP[baseChar] } : (FEATURE_MAP[baseChar[0]] ? { ...FEATURE_MAP[baseChar[0]] } : null);
+  let features = (FEATURE_MAP[baseChar] || featureMatrix.getFeatures(baseChar)) 
+    ? { ...(FEATURE_MAP[baseChar] || featureMatrix.getFeatures(baseChar)) } 
+    : ((FEATURE_MAP[baseChar[0]] || featureMatrix.getFeatures(baseChar[0])) 
+      ? { ...(FEATURE_MAP[baseChar[0]] || featureMatrix.getFeatures(baseChar[0])) } 
+      : null);
   
   // Handle ligatures connected with tie bars if base not found
   if (!features && baseChar.length > 1) {
     // A heuristic: take features of the last segment (often the release matters most) or blend?
     // For now, try the first character as the primary articulator base
-    features = FEATURE_MAP[baseChar[0]] ? { ...FEATURE_MAP[baseChar[0]] } : null;
+    features = (FEATURE_MAP[baseChar[0]] || featureMatrix.getFeatures(baseChar[0])) 
+      ? { ...(FEATURE_MAP[baseChar[0]] || featureMatrix.getFeatures(baseChar[0])) } 
+      : null;
   }
 
   if (!features) return null;
@@ -363,74 +369,9 @@ export const getEffectiveFeatures = (token: string): DistinctiveFeatures | null 
   return features;
 };
 
-// Calculate phonetic distance using Weighted Hamming Distance of features
+// Calculate phonetic distance using the dedicated phonemeDistance service
 export const getPhoneticDistance = (charA: string, charB: string, gapPenalty: number = 10, unknownCharPenalty: number = 8): number => {
-  if (charA === charB) return 0;
-  if (charA === GAP_CHAR || charB === GAP_CHAR) return gapPenalty;
-
-  // Explicitly handle syllable boundaries to prevent aligning them with segments
-  if (charA === '.' || charB === '.' || charA === ',' || charB === ',') return BOUNDARY_PENALTY;
-
-  const fA = getEffectiveFeatures(charA);
-  const fB = getEffectiveFeatures(charB);
-
-  if (!fA || !fB) return unknownCharPenalty;
-
-  let distance = 0;
-  
-  // Weights for different feature classes (Goal 2)
-  const weights: Record<keyof DistinctiveFeatures, number> = {
-    // Major Class (Prerequisite for everything)
-    syllabic: 4.0,
-    consonantal: 4.0,
-    sonorant: 3.0,
-    
-    // Manner (High weight)
-    continuant: 2.5,
-    nasal: 2.5,
-    lateral: 2.0,
-    delayedRelease: 2.0,
-    strident: 1.5,
-    
-    // Place (High weight)
-    labial: 2.5,
-    coronal: 2.5,
-    dorsal: 2.5,
-    
-    // Laryngeal (Medium weight)
-    voice: 2.0,
-    spreadGlottis: 1.5,
-    constrictedGlottis: 1.5,
-    
-    // Vowel Specifics (Medium weight)
-    high: 1.5,
-    low: 1.5,
-    back: 1.5,
-    round: 1.5,
-    tense: 1.0,
-    
-    // Suprasegmentals (Low weight)
-    long: 0.8,
-    stress: 0.5,
-    tone: 0.5
-  };
-
-  const keys = Object.keys(fA) as (keyof DistinctiveFeatures)[];
-  
-  for (const key of keys) {
-    const weight = weights[key] || 1.0;
-    
-    // Handle tone numerically
-    if (key === 'tone') {
-       distance += Math.abs(fA.tone - fB.tone) * weight;
-    } else {
-      if (fA[key] !== fB[key]) {
-        distance += weight;
-      }
-    }
-  }
-
-  return distance;
+  return phonemeDistance(charA, charB);
 };
 
 /**
@@ -446,7 +387,7 @@ export const tokenizeIPA = (word: string): string[] => {
   // OR: Literal dot for syllable boundary
   // OR: Literal comma for cognate set boundary
   const pattern = new RegExp(
-    `(?:${stress}?[${baseRange}](?:${tieBars}[${baseRange}])*${modifiers}*)|\\.|,`, 
+    `(?:${stress}?[${baseRange}](?:${tieBars}[${baseRange}])*${modifiers}*)|\\.|,|\\+|-`, 
     'gu'
   );
 
@@ -622,11 +563,12 @@ export const describeFeatures = (char: string): string => {
 };
 
 /**
- * Returns all phonemes in the FEATURE_MAP that match the given feature criteria.
+ * Returns all phonemes in the FEATURE_MAP and featureMatrix that match the given feature criteria.
  */
 export const getPhonemesByFeatures = (criteria: Partial<DistinctiveFeatures>): string[] => {
-  return Object.keys(FEATURE_MAP).filter(symbol => {
-    const features = FEATURE_MAP[symbol];
+  const allSymbols = { ...FEATURE_MAP, ...featureMatrix.getMatrix() };
+  return Object.keys(allSymbols).filter(symbol => {
+    const features = allSymbols[symbol];
     return Object.entries(criteria).every(([key, value]) => {
       return (features as any)[key] === value;
     });

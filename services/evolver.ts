@@ -95,18 +95,66 @@ export async function autoEvolveEdge(
     Return ONLY the JSON array. Do not include any markdown formatting like \`\`\`json.
   `;
 
+  let response;
   try {
-    const response = await puter.ai.chat(prompt, { model });
+    response = await puter.ai.chat(prompt, { model });
+  } catch (apiError: any) {
+    console.error("AI API call failed:", apiError);
+    let errorMsg = 'Unknown error';
+    if (typeof apiError === 'string') {
+      try {
+        const parsed = JSON.parse(apiError);
+        errorMsg = parsed.error || parsed.message || apiError;
+      } catch (e) {
+        errorMsg = apiError;
+      }
+    } else if (apiError && typeof apiError === 'object') {
+      errorMsg = apiError.error || apiError.message || JSON.stringify(apiError);
+    }
+    throw new Error(`Failed to communicate with AI: ${errorMsg}`);
+  }
+
+  try {
     const text = typeof response === 'string' ? response : (response as any).text || (response as any).message?.content;
     
     if (!text) throw new Error("Empty response from AI");
     
     // Clean up potential markdown formatting if the model ignored the instruction
-    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(jsonStr);
-  } catch (e) {
-    console.error("Failed to parse AI response:", e);
-    throw new Error("The AI returned an invalid evolution model. Please try again.");
+    let jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    // Extract just the JSON array if there's surrounding text
+    const matchArray = jsonStr.match(/\[[\s\S]*\]/);
+    if (matchArray) {
+      jsonStr = matchArray[0];
+    } else {
+      // Try to extract a JSON object if there's no array
+      const matchObj = jsonStr.match(/\{[\s\S]*\}/);
+      if (matchObj) {
+        jsonStr = matchObj[0];
+      }
+    }
+    
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        // If the AI returned an object with a steps array, or just a single step object
+        if (Array.isArray(parsed.steps)) {
+          return parsed.steps;
+        } else if (parsed.stepName) {
+          return [parsed];
+        }
+      }
+      throw new Error("Parsed JSON is not an array of steps");
+    } catch (parseError) {
+      console.error("Failed to parse JSON. Raw text:", text);
+      console.error("Extracted jsonStr:", jsonStr);
+      throw parseError;
+    }
+  } catch (e: any) {
+    console.error("Failed to process AI response:", e);
+    throw new Error(`The AI returned an invalid evolution model: ${e.message || 'Unknown error'}. Please try again.`);
   }
 }
 
