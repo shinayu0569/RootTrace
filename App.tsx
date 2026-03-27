@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Papa from 'papaparse';
 import { LanguageInput, ReconstructionMethod, ReconstructionResult, TreeNode, SoundChangeNote, EvolverNode } from './types';
-import { reconstructProtoWord } from './services/engine';
+import { reconstructProtoWord, performMSA_to_proto, AnnotatedCandidate } from './services/engine';
 import { GAP_CHAR, describeFeatures, getPhonemesByFeatures, matchFeatures } from './services/phonetics';
 import { autoEvolveEdge, algorithmicEvolveEdge, EvolverEdgeResult } from './services/evolver';
 import { phonemeDistance, nearestNeighbours } from './services/phonemeDistance';
@@ -212,6 +212,7 @@ const TreeNodeItem = React.memo(({ node, isRoot, isSelected, isDimmed, onSelect 
 }) => {
   const NODE_WIDTH = 130;
   const NODE_HEIGHT = 55;
+  const isUnattested = node.isUnattested || false;
   const nodeFill = isRoot ? "var(--accent)" : (isSelected ? "#10b981" : "var(--card-bg)");
 
   return (
@@ -228,12 +229,20 @@ const TreeNodeItem = React.memo(({ node, isRoot, isSelected, isDimmed, onSelect 
         height={NODE_HEIGHT} 
         rx={isRoot ? 27 : 12} 
         fill={nodeFill} 
-        stroke={isSelected ? "#34d399" : "var(--border)"}
-        strokeWidth={2}
+        stroke={isUnattested ? "#f59e0b" : (isSelected ? "#34d399" : "var(--border)")}
+        strokeWidth={isUnattested ? 3 : 2}
+        strokeDasharray={isUnattested ? "5,3" : "none"}
         className="shadow-2xl transition-colors duration-300" 
       />
-      <text x={NODE_WIDTH/2} y={isRoot ? 35 : 30} textAnchor="middle" fill={isRoot ? "#ffffff" : "var(--text)"} className={`font-bold ipa-font ${isRoot ? 'text-xl' : 'text-base'}`}>{isRoot ? node.name : node.reconstruction}</text>
-      {!isRoot && <text x={NODE_WIDTH/2} y={15} textAnchor="middle" fill="var(--muted)" className="text-[10px] uppercase font-black tracking-tighter">{node.name}</text>}
+      {/* Asterisk indicator for unattested nodes */}
+      {isUnattested && !isRoot && (
+        <g transform={`translate(${NODE_WIDTH - 15}, 15)`}>
+          <circle cx="0" cy="0" r="8" fill="#f59e0b" opacity="0.9"/>
+          <text x="0" y="4" textAnchor="middle" fill="white" className="text-[12px] font-black">*</text>
+        </g>
+      )}
+      <text x={NODE_WIDTH/2} y={isRoot ? 35 : 30} textAnchor="middle" fill={isRoot ? "#ffffff" : "var(--text)"} className={`font-bold ipa-font ${isRoot ? 'text-xl' : 'text-base'} ${isUnattested ? 'italic' : ''}`}>{isRoot ? node.name : node.reconstruction}</text>
+      {!isRoot && <text x={NODE_WIDTH/2} y={15} textAnchor="middle" fill={isUnattested ? "#f59e0b" : "var(--muted)"} className={`text-[10px] uppercase font-black tracking-tighter ${isUnattested ? 'font-bold' : ''}`}>{node.name}</text>}
     </g>
   );
 });
@@ -355,7 +364,7 @@ const TreeVisualization = ({
 const LanguageInputNode: React.FC<{
   lang: LanguageInput;
   path: number[];
-  onUpdate: (path: number[], field: keyof LanguageInput, val: string) => void;
+  onUpdate: (path: number[], field: keyof LanguageInput, val: any) => void;
   onRemove: (path: number[]) => void;
   onAddDescendant: (path: number[]) => void;
   onAddParent?: (path: number[]) => void;
@@ -373,46 +382,155 @@ const LanguageInputNode: React.FC<{
   onSelectLang,
   depth = 0
 }) => {
+  const isUnattested = lang.isUnattested || false;
+  
   return (
     <div className={`mt-3 ${depth > 0 ? 'ml-2 sm:ml-6 border-l-2 border-rt-border pl-2 sm:pl-4' : ''}`}>
       <div 
-        className={`bg-rt-card border p-4 rounded-2xl group relative transition-all ${selectedLang === lang.name || selectedLang === `${lang.name} (Spelling)` ? 'border-rt-accent bg-rt-accent/10' : 'border-rt-border hover:border-rt-accent/50'}`}
+        className={`bg-rt-card border p-4 rounded-2xl group relative transition-all ${
+          isUnattested 
+            ? 'border-dashed border-amber-500/50 bg-amber-500/5' 
+            : selectedLang === lang.name || selectedLang === `${lang.name} (Spelling)` 
+              ? 'border-rt-accent bg-rt-accent/10' 
+              : 'border-rt-border hover:border-rt-accent/50'
+        }`}
         onClick={(e) => { e.stopPropagation(); onSelectLang(selectedLang === lang.name ? null : lang.name); }}
       >
+        {/* Unattested indicator */}
+        {isUnattested && (
+          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+            <span className="text-lg font-bold">*</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">Unattested</span>
+          </div>
+        )}
+        
         <button 
           onClick={(e) => { e.stopPropagation(); onRemove(path); }} 
           className="absolute top-3 right-3 text-rt-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
         >✕</button>
+        
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="col-span-1">
             <label className="text-[9px] text-rt-muted font-bold uppercase mb-1 block">Label</label>
-            <input onClick={(e) => e.stopPropagation()} type="text" value={lang.name} onChange={e => onUpdate(path, 'name', e.target.value)} className="w-full bg-rt-input border border-rt-border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-rt-accent text-rt-text" />
+            <div className="relative">
+              <input 
+                onClick={(e) => e.stopPropagation()} 
+                type="text" 
+                value={lang.name} 
+                onChange={e => onUpdate(path, 'name', e.target.value)} 
+                className={`w-full border rounded-lg px-2 py-1.5 text-xs outline-none transition-all ${
+                  isUnattested 
+                    ? 'bg-amber-500/10 border-amber-500/50 text-amber-700 dark:text-amber-300 placeholder:text-amber-500/30 focus:border-amber-500' 
+                    : 'bg-rt-input border-rt-border text-rt-text placeholder:text-rt-muted/50 focus:border-rt-accent'
+                }`} 
+              />
+              {isUnattested && (
+                <div className="absolute inset-0 pointer-events-none rounded-lg border border-amber-500/30"></div>
+              )}
+            </div>
           </div>
+          
           <div className="col-span-1">
-            <label className="text-[9px] text-rt-muted font-bold uppercase mb-1 block">Pronunciation (IPA)</label>
-            <input onClick={(e) => e.stopPropagation()} type="text" value={lang.word} onChange={e => onUpdate(path, 'word', e.target.value)} className="w-full bg-rt-input border border-rt-border rounded-lg px-2 py-1.5 text-sm ipa-font outline-none focus:border-rt-accent text-rt-text placeholder:text-rt-muted/50" placeholder="pʰaːtēr" />
+            <label className="text-[9px] text-rt-muted font-bold uppercase mb-1 block">
+              {isUnattested 
+                ? (lang.word ? 'Reconstructed Form (IPA)' : 'Form (Auto-Reconstructed)') 
+                : 'Pronunciation (IPA)'
+              }
+              {isUnattested && <span className="ml-1 text-[8px] text-amber-500">(optional)</span>}
+            </label>
+            <div className="relative">
+              <input 
+                onClick={(e) => e.stopPropagation()} 
+                type="text" 
+                value={lang.word} 
+                onChange={e => onUpdate(path, 'word', e.target.value)} 
+                className={`w-full border rounded-lg px-2 py-1.5 text-sm ipa-font outline-none transition-all ${
+                  isUnattested 
+                    ? 'bg-amber-500/10 border-amber-500/50 text-amber-700 dark:text-amber-300 placeholder:text-amber-500/30 focus:border-amber-500 italic' 
+                    : 'bg-rt-input border-rt-border text-rt-text placeholder:text-rt-muted/50 focus:border-rt-accent'
+                }`} 
+                placeholder={isUnattested ? "Leave empty for auto-reconstruction" : "pʰaːtēr"}
+                disabled={isUnattested && lang.word === ''}  // Show as disabled until user types or reconstruction happens
+              />
+              {isUnattested && !lang.word && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                  <span className="text-[9px] text-amber-500">→ auto</span>
+                </div>
+              )}
+              {isUnattested && (
+                <div className="absolute inset-0 pointer-events-none rounded-lg border border-amber-500/30"></div>
+              )}
+            </div>
           </div>
+          
           <div className="col-span-1">
             <label className="text-[9px] text-rt-muted font-bold uppercase mb-1 block">Spelling (IPA) - Optional</label>
-            <input onClick={(e) => e.stopPropagation()} type="text" value={lang.spelling || ''} onChange={e => onUpdate(path, 'spelling', e.target.value)} className="w-full bg-rt-input border border-rt-border rounded-lg px-2 py-1.5 text-sm ipa-font outline-none focus:border-rt-accent text-rt-muted placeholder:text-rt-muted/50" placeholder="Older form..." />
+            <input 
+              onClick={(e) => e.stopPropagation()} 
+              type="text" 
+              value={lang.spelling || ''} 
+              onChange={e => onUpdate(path, 'spelling', e.target.value)} 
+              className="w-full bg-rt-input border border-rt-border rounded-lg px-2 py-1.5 text-sm ipa-font outline-none focus:border-rt-accent text-rt-muted placeholder:text-rt-muted/50" 
+              placeholder="Older form..." 
+            />
           </div>
         </div>
-        <div className="mt-3 flex justify-end gap-2">
-          {depth === 0 && onAddParent && (
-            <button 
-              onClick={(e) => { e.stopPropagation(); onAddParent(path); }}
-              className="text-[9px] font-bold bg-rt-input hover:bg-rt-border px-3 py-1.5 rounded-lg border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text"
+        
+        {/* Unattested toggle */}
+        <div className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id={`unattested-${lang.id}`}
+              checked={isUnattested}
+              onChange={(e) => {
+                e.stopPropagation();
+                onUpdate(path, 'isUnattested', e.target.checked);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-4 h-4 text-amber-600 bg-rt-input border-rt-border rounded focus:ring-amber-500 focus:ring-2 transition-all"
+            />
+            <label 
+              htmlFor={`unattested-${lang.id}`}
+              className="text-[10px] text-rt-muted font-medium cursor-pointer hover:text-rt-text transition-colors"
+              onClick={(e) => e.stopPropagation()}
             >
-              + Parent
+              Mark as unattested (no direct phonetic evidence)
+            </label>
+          </div>
+          
+          <div className="flex gap-2">
+            {depth === 0 && onAddParent && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); onAddParent(path); }}
+                className="text-[9px] font-bold bg-rt-input hover:bg-rt-border px-3 py-1.5 rounded-lg border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text"
+              >
+                + Parent
+              </button>
+            )}
+            <button 
+              onClick={(e) => { e.stopPropagation(); onAddDescendant(path); }}
+              className="text-[9px] font-black bg-rt-input hover:bg-rt-border px-3 py-1.5 rounded-lg border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text"
+            >
+              + Descendant
             </button>
-          )}
-          <button 
-            onClick={(e) => { e.stopPropagation(); onAddDescendant(path); }}
-            className="text-[9px] font-black bg-rt-input hover:bg-rt-border px-3 py-1.5 rounded-lg border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text"
-          >
-            + Descendant
-          </button>
+          </div>
         </div>
+        
+        {/* Info message for unattested nodes */}
+        {isUnattested && (
+          <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+            <p className="text-[10px] text-amber-700 dark:text-amber-300">
+              <span className="font-bold">Unattested language:</span> No direct phonetic evidence required. 
+              Form will be <span className="font-semibold">automatically reconstructed</span> from descendants.
+              {lang.descendants && lang.descendants.length > 0 && (
+                <span className="block mt-1 text-[9px] text-amber-600 dark:text-amber-400">
+                  → Bidirectional: If preceded by attested ancestor, reconstruction combines both directions.
+                </span>
+              )}
+            </p>
+          </div>
+        )}
       </div>
       {lang.descendants && lang.descendants.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -451,6 +569,25 @@ const EvolverInputNode: React.FC<{
   onAddDescendant,
   depth = 0
 }) => {
+  // Ensure subStageWeights matches subStages count
+  const effectiveWeights = node.subStageWeights || [];
+  const needsWeights = node.subStages > 0;
+  
+  // Initialize weights if needed (equal distribution)
+  React.useEffect(() => {
+    if (needsWeights && effectiveWeights.length !== node.subStages) {
+      const equalWeight = 1 / node.subStages;
+      const newWeights = Array(node.subStages).fill(equalWeight);
+      onUpdate(path, 'subStageWeights', newWeights);
+    }
+  }, [node.subStages, needsWeights, effectiveWeights.length, onUpdate, path]);
+  
+  const handleWeightChange = (idx: number, value: number) => {
+    const newWeights = [...(node.subStageWeights || Array(node.subStages).fill(1 / node.subStages))];
+    newWeights[idx] = Math.max(0, Math.min(1, value));
+    onUpdate(path, 'subStageWeights', newWeights);
+  };
+  
   return (
     <div className={`mt-3 ${depth > 0 ? 'ml-2 sm:ml-6 border-l-2 border-rt-border pl-2 sm:pl-4' : ''}`}>
       <div className="bg-rt-card border border-rt-border p-4 rounded-2xl group relative transition-all hover:border-rt-accent/50">
@@ -472,6 +609,33 @@ const EvolverInputNode: React.FC<{
             <label className="text-[9px] text-rt-muted font-bold uppercase mb-1 block">Words (one per line)</label>
             <textarea value={node.wordsText} onChange={e => onUpdate(path, 'wordsText', e.target.value)} className="w-full h-24 bg-rt-input border border-rt-border rounded-lg px-2 py-1.5 text-sm font-mono outline-none focus:border-rt-accent text-rt-text resize-none custom-scrollbar" placeholder="Word 1&#10;Word 2" />
           </div>
+          
+          {/* Stage Weights UI */}
+          {depth > 0 && node.subStages > 0 && (
+            <div className="sm:col-span-2 border-t border-rt-border pt-3 mt-1">
+              <label className="text-[9px] text-rt-muted font-bold uppercase mb-2 block flex items-center gap-2">
+                Stage Weights (temporal distribution)
+                <span className="text-[8px] text-rt-accent font-normal normal-case">Weights determine when changes occurred</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {(node.subStageWeights || Array(node.subStages).fill(1 / node.subStages)).map((w, i) => (
+                  <div key={i} className="flex items-center gap-1 bg-rt-input rounded-lg px-2 py-1 border border-rt-border">
+                    <span className="text-[9px] text-rt-muted">Stage {i + 1}:</span>
+                    <input 
+                      type="number" 
+                      min="0.1" 
+                      max="1" 
+                      step="0.1"
+                      value={w.toFixed(1)} 
+                      onChange={e => handleWeightChange(i, parseFloat(e.target.value))}
+                      className="w-12 bg-transparent text-xs text-rt-text outline-none text-center"
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="text-[8px] text-rt-muted mt-1">Lower weights = earlier changes, Higher weights = later changes</p>
+            </div>
+          )}
         </div>
         <div className="mt-3 flex justify-end gap-2">
           <button onClick={() => onAddDescendant(path)} className="text-[9px] font-bold bg-rt-input hover:bg-rt-border px-3 py-1.5 rounded-lg border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text">
@@ -507,6 +671,7 @@ const INITIAL_EVOLVER_DATA: EvolverNode = {
 };
 
 export default function App() {
+  const [isDirty, setIsDirty] = useState(false);
   const [inputs, setInputs] = useState<LanguageInput[]>(INITIAL_DATA);
   const [result, setResult] = useState<ReconstructionResult | null>(null);
   const [method, setMethod] = useState<ReconstructionMethod>(ReconstructionMethod.BAYESIAN_AI);
@@ -558,9 +723,24 @@ export default function App() {
   };
 
   const runReconstruction = () => {
+    // Check if there are any valid inputs
+    const hasValidInput = (nodes: LanguageInput[]): boolean => {
+      for (const node of nodes) {
+        if (node.word && node.word.trim() !== '') return true;
+        if (node.descendants && hasValidInput(node.descendants)) return true;
+      }
+      return false;
+    };
+
+    if (!hasValidInput(inputs)) {
+      setErrorMsg("Please enter at least one word to reconstruct.");
+      return;
+    }
+
     setIsProcessing(true);
     setInspectedCol(null);
     setSelectedLang(null); // Reset selection on new run
+    setIsDirty(false); // Clear dirty flag
     setTimeout(() => {
       try { setResult(reconstructProtoWord(inputs, method, { mcmcIterations, gapPenalty, unknownCharPenalty })); }
       catch (e) { console.error(e); setErrorMsg("Reconstruction engine error."); }
@@ -568,9 +748,42 @@ export default function App() {
     }, 800);
   };
 
+  const switchCandidate = (candidate: AnnotatedCandidate) => {
+    if (!result) return;
+    
+    // Flatten inputs to get all words for alignment
+    const getWords = (nodes: LanguageInput[]): { word: string }[] => {
+      let words: { word: string }[] = [];
+      for (const node of nodes) {
+        if (node.word && node.word.trim() !== '') {
+          words.push({ word: node.word });
+        }
+        if (node.descendants) {
+          words = words.concat(getWords(node.descendants));
+        }
+      }
+      return words;
+    };
+    
+    const allInputs = getWords(inputs);
+    
+    const { alignmentMatrix: newAlignment, protoTokens: newProtoTokens } = performMSA_to_proto(
+      allInputs,
+      candidate.chars,
+      { mcmcIterations, gapPenalty, unknownCharPenalty }
+    );
+    
+    setResult({
+      ...result,
+      protoForm: candidate.form,
+      protoTokens: newProtoTokens,
+      alignmentMatrix: newAlignment
+    });
+  };
+
   useEffect(() => { runReconstruction(); }, []);
 
-  const handleUpdateNode = (path: number[], field: keyof LanguageInput, val: string) => {
+  const handleUpdateNode = (path: number[], field: keyof LanguageInput, val: any) => {
     const update = (nodes: LanguageInput[], p: number[]): LanguageInput[] => {
       if (p.length === 0) return nodes;
       const newNodes = [...nodes];
@@ -586,6 +799,7 @@ export default function App() {
       return newNodes;
     };
     setInputs(update(inputs, path));
+    setIsDirty(true);
   };
 
   const handleRemoveNode = (path: number[]) => {
@@ -604,6 +818,7 @@ export default function App() {
       return newNodes;
     };
     setInputs(remove(inputs, path));
+    setIsDirty(true);
   };
 
   const handleAddDescendant = (path: number[]) => {
@@ -625,6 +840,7 @@ export default function App() {
       return newNodes;
     };
     setInputs(add(inputs, path));
+    setIsDirty(true);
   };
 
   const handleAddParent = (path: number[]) => {
@@ -642,6 +858,7 @@ export default function App() {
     
     newNodes[idx] = newParent;
     setInputs(newNodes);
+    setIsDirty(true);
   };
 
   const handleUpdateEvolverNode = (path: number[], field: keyof EvolverNode, val: any) => {
@@ -701,7 +918,7 @@ export default function App() {
           if (evolverMode === 'algorithmic') {
             throw new Error("Algorithmic mode is currently a Work In Progress and is disabled.");
           } else {
-            steps = await autoEvolveEdge(node.name, desc.name, sourceWords, targetWords, desc.subStages, evolverModel);
+            steps = await autoEvolveEdge(node.name, desc.name, sourceWords, targetWords, desc.subStages, desc.subStageWeights, evolverModel);
           }
           results.push({
             sourceId: node.id,
@@ -806,6 +1023,7 @@ export default function App() {
               }));
               
               setInputs(newInputs);
+              setIsDirty(true);
             }
           });
         } else {
@@ -813,6 +1031,7 @@ export default function App() {
           const parsed = JSON.parse(content);
           if (Array.isArray(parsed)) {
             setInputs(parsed);
+            setIsDirty(true);
           } else {
             setErrorMsg('Invalid JSON format: Expected an array of language inputs.');
           }
@@ -881,7 +1100,7 @@ export default function App() {
           </div>
           <select 
             value={method} 
-            onChange={e => setMethod(e.target.value as ReconstructionMethod)}
+            onChange={e => { setMethod(e.target.value as ReconstructionMethod); setIsDirty(true); }}
             className="bg-rt-input border border-rt-border text-sm rounded-xl p-3 text-rt-text outline-none focus:ring-2 ring-rt-accent/50 transition-all cursor-pointer"
           >
             <option value={ReconstructionMethod.BAYESIAN_AI}>Bayesian (Recommended)</option>
@@ -927,7 +1146,7 @@ export default function App() {
                 <input 
                   type="range" min="1000" max="10000" step="500" 
                   value={mcmcIterations} 
-                  onChange={e => setMcmcIterations(Number(e.target.value))}
+                  onChange={e => { setMcmcIterations(Number(e.target.value)); setIsDirty(true); }}
                   className="w-full accent-rt-accent"
                 />
               </div>
@@ -940,7 +1159,7 @@ export default function App() {
                 <input 
                   type="range" min="1" max="20" step="1" 
                   value={gapPenalty} 
-                  onChange={e => setGapPenalty(Number(e.target.value))}
+                  onChange={e => { setGapPenalty(Number(e.target.value)); setIsDirty(true); }}
                   className="w-full accent-rt-accent"
                 />
               </div>
@@ -953,7 +1172,7 @@ export default function App() {
                 <input 
                   type="range" min="1" max="20" step="1" 
                   value={unknownCharPenalty} 
-                  onChange={e => setUnknownCharPenalty(Number(e.target.value))}
+                  onChange={e => { setUnknownCharPenalty(Number(e.target.value)); setIsDirty(true); }}
                   className="w-full accent-rt-accent"
                 />
               </div>
@@ -982,7 +1201,7 @@ export default function App() {
               <button onClick={handleExportJSON} className="text-[10px] font-bold bg-rt-card hover:bg-rt-input px-3 py-2 rounded-xl border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text">
                 Export
               </button>
-              <button onClick={() => setInputs([...inputs, { id: Date.now().toString(), name: 'New', word: '' }])} className="text-[10px] font-bold bg-rt-card hover:bg-rt-input px-3 py-2 rounded-xl border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text">
+              <button onClick={() => { setInputs([...inputs, { id: Date.now().toString(), name: 'New', word: '' }]); setIsDirty(true); }} className="text-[10px] font-bold bg-rt-card hover:bg-rt-input px-3 py-2 rounded-xl border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text">
                 Add Lang
               </button>
             </div>
@@ -1018,7 +1237,7 @@ export default function App() {
                 {result.candidates && result.candidates.length > 1 && (
                   <div className="flex flex-wrap justify-center gap-3">
                     {result.candidates.map((c, i) => (
-                      <button key={i} onClick={() => setResult({...result, protoForm: c.form})} className={`px-4 py-2 rounded-full text-xs font-mono transition-all border ${result.protoForm === c.form ? 'bg-rt-accent border-rt-accent text-white shadow-lg' : 'bg-rt-input border-rt-border text-rt-muted hover:border-rt-muted'}`}>
+                      <button key={i} onClick={() => switchCandidate(c)} className={`px-4 py-2 rounded-full text-xs font-mono transition-all border ${result.protoForm === c.form ? 'bg-rt-accent border-rt-accent text-white shadow-lg' : 'bg-rt-input border-rt-border text-rt-muted hover:border-rt-muted'}`}>
                         {c.form} ({((c.probability || 0) * 100).toFixed(0)}%)
                       </button>
                     ))}
@@ -1027,6 +1246,12 @@ export default function App() {
               </div>
 
               <div className="bg-rt-card border border-rt-border rounded-3xl p-4 sm:p-8 overflow-hidden backdrop-blur-sm shadow-xl">
+                {isDirty && (
+                  <div className="mb-6 bg-yellow-500/10 border border-yellow-500/30 text-yellow-600 dark:text-yellow-400 p-4 rounded-xl text-sm font-medium flex items-center gap-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                    Results may be stale — re-run reconstruction
+                  </div>
+                )}
                 <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-2 mb-6 sm:mb-8">
                   <div>
                     <h3 className="text-lg font-serif font-bold text-rt-text">Alignment Matrix</h3>
@@ -1053,21 +1278,32 @@ export default function App() {
                           <td key={i} onClick={() => setInspectedCol(i)} className={`p-4 text-center ipa-font text-3xl text-rt-text cursor-pointer transition-all hover:text-rt-accent ${inspectedCol === i ? 'bg-rt-accent/20' : ''}`}>{c}</td>
                         ))}
                       </tr>
-                      {inputs.map((l, idx) => (
-                        <tr 
-                          key={l.id} 
-                          className={`hover:bg-rt-input transition-colors border-b border-rt-border ${selectedLang === l.name || selectedLang === `${l.name} (Spelling)` ? 'bg-rt-accent/10' : ''}`}
-                          onClick={() => setSelectedLang(selectedLang === l.name ? null : l.name)}
-                        >
-                          <td className={`p-5 text-xs font-bold border-r border-rt-border ${selectedLang === l.name || selectedLang === `${l.name} (Spelling)` ? 'text-rt-accent' : 'text-rt-muted'}`}>{l.name}</td>
-                          <td className="p-5 text-xs font-mono text-rt-muted border-r border-rt-border text-center">
-                            {result.languageWeights && result.languageWeights[idx] !== undefined ? result.languageWeights[idx].toFixed(2) : '1.00'}
-                          </td>
-                          {result.alignmentMatrix[idx]?.map((c, ci) => (
-                            <td key={ci} className={`p-4 text-center ipa-font text-xl ${c === GAP_CHAR ? 'text-rt-muted' : (result.protoTokens[ci] === c ? 'text-rt-success/90' : 'text-rt-warning/70')} ${inspectedCol === ci ? 'bg-rt-input' : ''}`}>{c}</td>
-                          ))}
-                        </tr>
-                      ))}
+                      {(() => {
+                        const flattenInputs = (nodes: LanguageInput[]): LanguageInput[] => {
+                          let flat: LanguageInput[] = [];
+                          for (const node of nodes) {
+                            if (node.word && node.word.trim() !== '') flat.push(node);
+                            if (node.descendants) flat = flat.concat(flattenInputs(node.descendants));
+                          }
+                          return flat;
+                        };
+                        const flatInputs = flattenInputs(inputs);
+                        return flatInputs.map((l, idx) => (
+                          <tr 
+                            key={l.id} 
+                            className={`hover:bg-rt-input transition-colors border-b border-rt-border ${selectedLang === l.name || selectedLang === `${l.name} (Spelling)` ? 'bg-rt-accent/10' : ''}`}
+                            onClick={() => setSelectedLang(selectedLang === l.name ? null : l.name)}
+                          >
+                            <td className={`p-5 text-xs font-bold border-r border-rt-border ${selectedLang === l.name || selectedLang === `${l.name} (Spelling)` ? 'text-rt-accent' : 'text-rt-muted'}`}>{l.name}</td>
+                            <td className="p-5 text-xs font-mono text-rt-muted border-r border-rt-border text-center">
+                              {result.languageWeights && result.languageWeights[idx] !== undefined ? result.languageWeights[idx].toFixed(2) : '1.00'}
+                            </td>
+                            {result.alignmentMatrix[idx]?.map((c, ci) => (
+                              <td key={ci} className={`p-4 text-center ipa-font text-xl ${c === GAP_CHAR ? 'text-rt-muted' : (result.protoTokens[ci] === c ? 'text-rt-success/90' : 'text-rt-warning/70')} ${inspectedCol === ci ? 'bg-rt-input' : ''}`}>{c}</td>
+                            ))}
+                          </tr>
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -1327,9 +1563,20 @@ export default function App() {
                     <optgroup label="OpenAI (via Puter)">
                       <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
                       <option value="gpt-4o">GPT-4o (Powerful)</option>
+                      <option value="o1-mini">o1-mini</option>
+                      <option value="o1-preview">o1-preview</option>
                     </optgroup>
                     <optgroup label="Anthropic (via Puter)">
                       <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                      <option value="claude-3-opus">Claude 3 Opus</option>
+                      <option value="claude-3-haiku">Claude 3 Haiku</option>
+                    </optgroup>
+                    <optgroup label="Google (via Puter)">
+                      <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                      <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                    </optgroup>
+                    <optgroup label="xAI (via Puter)">
+                      <option value="grok-beta">Grok Beta</option>
                     </optgroup>
                     <optgroup label="DeepSeek (via Puter)">
                       <option value="deepseek-chat">DeepSeek V3</option>

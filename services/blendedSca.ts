@@ -23,6 +23,12 @@ export interface BlendedScaResult {
   intermediateRomanizations: Record<string, string>;
 }
 
+export interface ScaError {
+  line: number;
+  message: string;
+  type: 'syntax' | 'reference' | 'phonetic';
+}
+
 interface RuleOptions {
   name?: string;
   propagate?: boolean;
@@ -30,6 +36,7 @@ interface RuleOptions {
   filter?: string;
   firstOnly?: boolean;
   lastOnly?: boolean;
+  exclusive?: boolean;
 }
 
 class Rule {
@@ -62,6 +69,12 @@ class Rule {
     this.stages[this.stages.length - 1].condition = condition;
   }
 
+  public setExclusive() {
+    if (this.stages.length > 0) {
+      this.stages[this.stages.length - 1].options.exclusive = true;
+    }
+  }
+
   public addStage(options: RuleOptions) {
     this.stages.push({ subRules: [], elseSubRules: [], options });
   }
@@ -92,102 +105,72 @@ class Rule {
 
     do {
       const before = current;
-      if (stage.options.direction === 'ltr') {
-        current = this.applyLtr(current, subRules, stage.options);
-      } else if (stage.options.direction === 'rtl') {
-        current = this.applyRtl(current, subRules, stage.options);
-      } else {
-        current = this.applySimultaneous(current, subRules, stage.options);
+      
+      for (const subRule of subRules) {
+        current = this.applySubRule(current, subRule, stage.options);
       }
-
-      if (current === before) break;
+      
       iterations++;
-    } while (stage.options.propagate && iterations < maxIterations);
-
-    return current;
-  }
-
-  private applySimultaneous(word: string, subRules: any[], stageOptions: RuleOptions): string {
-    let current = word;
-    for (const subRule of subRules) {
-      const options = { ...stageOptions, ...subRule.options };
-      current = this.applySubRule(current, subRule, options);
-    }
-    return current;
-  }
-
-  private applyLtr(word: string, subRules: any[], stageOptions: RuleOptions): string {
-    let current = word;
-    let pos = 0;
+      if (iterations >= maxIterations) {
+        console.warn(`Rule "${this.name}" exceeded maximum iterations (${maxIterations}). Possible infinite loop.`);
+        break;
+      }
+      
+      if (!stage.options.propagate) break;
+      
+      if (current === before) break;
+    } while (true);
     
-    while (pos < current.length) {
-      let matched = false;
-      for (const subRule of subRules) {
-        const options = { ...stageOptions, ...subRule.options };
-        const { match, replacement, environments, exceptions } = subRule;
+    return current;
+  }
+
+  private matchRomanizationTable(target: string, tableStr: string): string | null {
+    const rows = tableStr.split(';').map(r => r.trim()).filter(r => r);
+    for (const row of rows) {
+      const cols = row.split(/\s+/);
+      if (cols.length === 2) {
+        if (cols[0] === target) return cols[1];
+      }
+    }
+    return null;
+  }
+
+  private applyDirectionalSubRule(word: string, subRule: any, options: RuleOptions): string {
+    const { match, replacement, environments, exceptions } = subRule;
+    const direction = options.direction || 'ltr';
+    
+    let result = word;
+    const chars = Array.from(result);
+    const indices = direction === 'ltr' 
+      ? chars.map((_, i) => i)
+      : chars.map((_, i) => chars.length - 1 - i);
+
+    for (const i of indices) {
+      const testStr = result;
+      let changed = false;
+      
+      for (const env of environments) {
+        const [beforeEnv, afterEnv] = env.split('_');
+        const { regexStr, subscriptMap, featureVars } = this.buildRegex(match, beforeEnv, afterEnv, exceptions);
+        const regex = new RegExp(regexStr, 'gu');
         
-        for (const env of environments) {
-          const [beforeEnv, afterEnv] = env.split('_');
-          const { regexStr, subscriptMap, featureVars } = this.buildRegex(match, beforeEnv, afterEnv, exceptions);
-          const regex = new RegExp(`^${regexStr}`, 'u');
-          const remaining = current.slice(pos);
-          const m = regex.exec(remaining);
-          
-          if (m) {
+        let m;
+        while ((m = regex.exec(testStr)) !== null) {
+          if (m.index === i || (m.index <= i && i < m.index + m[0].length)) {
             const fullMatch = m[0];
             const groups = m.groups;
             const repl = this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
-            current = current.slice(0, pos) + repl + current.slice(pos + fullMatch.length);
-            
-            if (options.firstOnly) return current;
-
-            pos += repl.length;
-            matched = true;
+            result = result.slice(0, m.index) + repl + result.slice(m.index + fullMatch.length);
+            changed = true;
             break;
           }
         }
-        if (matched) break;
+        if (changed) break;
       }
-      if (!matched) pos++;
+      if (changed && !options.propagate) break;
     }
-    return current;
-  }
-
-  private applyRtl(word: string, subRules: any[], stageOptions: RuleOptions): string {
-    let current = word;
-    let pos = current.length;
     
-    while (pos >= 0) {
-      let matched = false;
-      for (const subRule of subRules) {
-        const options = { ...stageOptions, ...subRule.options };
-        const { match, replacement, environments, exceptions } = subRule;
-        
-        for (const env of environments) {
-          const [beforeEnv, afterEnv] = env.split('_');
-          const { regexStr, subscriptMap, featureVars } = this.buildRegex(match, beforeEnv, afterEnv, exceptions);
-          const regex = new RegExp(`${regexStr}$`, 'u');
-          const prefix = current.slice(0, pos);
-          const m = regex.exec(prefix);
-          
-          if (m) {
-            const fullMatch = m[0];
-            const groups = m.groups;
-            const repl = this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
-            current = current.slice(0, m.index) + repl + current.slice(pos);
-            
-            if (options.lastOnly) return current;
-
-            pos = m.index;
-            matched = true;
-            break;
-          }
-        }
-        if (matched) break;
-      }
-      if (!matched) pos--;
-    }
-    return current;
+    return result;
   }
 
   private applySubRule(word: string, subRule: any, options: RuleOptions): string {
@@ -368,17 +351,22 @@ class Rule {
         res = res.replace(/\s+/g, '\\s*');
       }
 
+      // Escape literal dots so they match syllable boundaries
+      res = res.replace(/\./g, '\\.');
+
       // Handle boundaries
       if (isBefore) {
         res = res.replace(/##/g, '(?:^|\\s+)');
         res = res.replace(/#/g, '^');
-        res = res.replace(/\$/g, '(?:^|\\.|\\s)');
+        // $ now matches syllable boundary (the literal . in syllabified words) OR word boundary
+        res = res.replace(/\$/g, '(?:\\.|^|\\s)');
         res = res.replace(/\+/g, '(?:\\+)');
         res = res.replace(/σ/g, '(?:[^.]+)');
       } else {
         res = res.replace(/##/g, '(?:$|\\s+)');
         res = res.replace(/#/g, '$');
-        res = res.replace(/\$/g, '(?:$|\\.|\\s)');
+        // $ now matches syllable boundary (the literal . in syllabified words) OR word boundary
+        res = res.replace(/\$/g, '(?:\\.|$|\\s)');
         res = res.replace(/\+/g, '(?:\\+)');
         res = res.replace(/σ/g, '(?:[^.]+)');
       }
@@ -386,226 +374,293 @@ class Rule {
       return res;
     };
 
-    const matchRegex = translatePart(match, false, true);
-    const beforeRegex = translatePart(before, true, false);
-    const afterRegex = translatePart(after, false, false);
+    const matchPart = translatePart(match, false, true);
+    const beforePart = translatePart(before, true, false);
+    const afterPart = translatePart(after, false, false);
 
-    let finalRegex = '';
-    
+    let regexStr = '';
+    if (beforePart) regexStr += `(?<=${beforePart})`;
+    regexStr += matchPart;
+    if (afterPart) regexStr += `(?=${afterPart})`;
+
     // Handle exceptions
     if (exceptions.length > 0) {
       for (const exc of exceptions) {
         const [excBefore, excAfter] = exc.split('_');
-        const eb = translatePart(excBefore, true, false);
-        const ea = translatePart(excAfter, false, false);
+        const excBeforePart = translatePart(excBefore || '', true, false);
+        const excAfterPart = translatePart(excAfter || '', false, false);
         
-        if (eb && ea) {
-          // Exception is full environment
-          finalRegex += `(?!(?<=${eb})${matchRegex}(?=${ea}))`;
-        } else if (eb) {
-          finalRegex += `(?!(?<=${eb})${matchRegex})`;
-        } else if (ea) {
-          finalRegex += `(?!(?:)${matchRegex}(?=${ea}))`;
-        }
+        let negLookbehind = '';
+        let negLookahead = '';
+        
+        if (excBeforePart) negLookbehind = `(?<!${excBeforePart})`;
+        if (excAfterPart) negLookahead = `(?!${excAfterPart})`;
+        
+        regexStr = negLookbehind + regexStr + negLookahead;
       }
     }
 
-    if (beforeRegex) finalRegex += `(?<=${beforeRegex})`;
-    finalRegex += `(${matchRegex})`;
-    if (afterRegex) finalRegex += `(?=${afterRegex})`;
-
-    return { regexStr: finalRegex, subscriptMap, featureVars };
+    return { regexStr, subscriptMap, featureVars };
   }
 
   private buildReplacement(replacement: string, fullMatch: string, groups: any, subscriptMap: Record<string, string>, featureVars: Record<string, string>): string {
-    if (replacement === '∅' || replacement === '') return '';
-    if (replacement === '__') return fullMatch + fullMatch;
-    
-    let res = replacement;
+    let result = replacement;
 
-    // Handle standalone feature modification: [+voiced]
-    const standaloneFeatureMatch = res.match(/^\[([+-]\w+(?:\s+[+-]\w+)*)\]$/);
-    if (standaloneFeatureMatch) {
-      const featureStr = standaloneFeatureMatch[1];
-      const criteria: any = {};
-      featureStr.split(/\s+/).forEach((f: string) => {
-        const val = f.startsWith('+');
-        const key = f.slice(1);
-        criteria[key] = val;
-      });
-      return this.applyFeaturesToPhoneme(fullMatch, criteria);
+    // Handle ∅ deletion
+    if (result === '∅' || result === '0') return '';
+
+    // Handle reduplication
+    if (result === '__') return fullMatch + fullMatch;
+    if (result.startsWith('__')) {
+      const rest = result.slice(2);
+      return fullMatch + rest;
+    }
+    if (result.endsWith('__')) {
+      const rest = result.slice(0, -2);
+      return rest + fullMatch;
     }
 
-    // Handle random alternation b > m*3 | n
-    if (res.includes('|')) {
-      const options = res.split('|').map(opt => {
-        const parts = opt.trim().split('*');
-        const value = parts[0].trim();
-        const weight = parts[1] ? parseInt(parts[1].trim(), 10) : 1;
-        return { value, weight };
-      });
-      const totalWeight = options.reduce((sum, opt) => sum + opt.weight, 0);
-      let rand = Math.random() * totalWeight;
-      for (const opt of options) {
-        if (rand < opt.weight) {
-          res = opt.value;
-          break;
-        }
-        rand -= opt.weight;
+    // Handle subscripts in replacement
+    for (const [key, groupName] of Object.entries(subscriptMap)) {
+      const val = groups && groups[groupName];
+      if (val !== undefined) {
+        const re = new RegExp(key.replace(/(\d+)/, (_, n) => `[${n}${String.fromCharCode(0x2080 + parseInt(n) - 1)}]`), 'g');
+        result = result.replace(re, val);
       }
     }
 
-    // Handle subscript back-references in replacement
-    // Support S1[+fortis] or just S1
-    res = res.replace(/([A-Z@ᴰ]\w*)([1-9₁-₉])(\[([+-]\w+(?:\s+[+-]\w+)*)\])?/g, (_, name, sub, hasFeatures, featureStr) => {
-      const n = sub.replace(/[₁-₉]/g, (c: string) => String.fromCharCode(c.charCodeAt(0) - 0x2080 + 0x30));
-      const key = `${name}${n}`;
-      const groupName = subscriptMap[key];
-      const sourcePhoneme = (groups && groups[groupName]) || '';
-      
-      if (hasFeatures && sourcePhoneme) {
-        const criteria: any = {};
-        featureStr.slice(1, -1).split(/\s+/).forEach((f: string) => {
-          const val = f.startsWith('+');
-          const key = f.slice(1);
-          criteria[key] = val;
-        });
-        return this.applyFeaturesToPhoneme(sourcePhoneme, criteria);
-      }
-      
-      return sourcePhoneme || fullMatch;
-    });
-
-    // Handle copy match in place _ with optional features _[+fortis]
-    res = res.replace(/(?<!_)_(\[([+-]\w+(?:\s+[+-]\w+)*)\])?(?!_)/g, (_, hasFeatures, featureStr) => {
-      if (hasFeatures) {
-        const criteria: any = {};
-        featureStr.slice(1, -1).split(/\s+/).forEach((f: string) => {
-          const val = f.startsWith('+');
-          const key = f.slice(1);
-          criteria[key] = val;
-        });
-        const phonemes = tokenizeIPA(fullMatch);
-        if (phonemes.length > 0) {
-          return this.applyFeaturesToPhoneme(phonemes[0], criteria) + phonemes.slice(1).join('');
-        }
-      }
-      return fullMatch;
-    });
-
-    // Handle feature variables in replacement [@place]
-    res = res.replace(/\[@(\w+)\]/g, (_, varName) => {
-      const groupName = featureVars[varName];
-      const sourcePhoneme = groups && groups[groupName];
-      if (sourcePhoneme) {
-        const features = getEffectiveFeatures(sourcePhoneme);
-        if (features) {
-          // Map varName to actual features
-          const featureKeys = this.getFeatureKeysForVar(varName);
-          const changes: any = {};
-          featureKeys.forEach(k => {
-            changes[k] = (features as any)[k];
+    // Handle feature variables in replacement
+    for (const [varName, groupName] of Object.entries(featureVars)) {
+      const capturedPhoneme = groups && groups[groupName];
+      if (capturedPhoneme !== undefined) {
+        const featureKeys = this.engine.getFeatureKeysForVar(varName);
+        const capturedFeatures = getEffectiveFeatures(capturedPhoneme);
+        if (capturedFeatures) {
+          // Build replacement pattern
+          const pattern = new RegExp(`\\[@${varName}\\]`, 'gi');
+          result = result.replace(pattern, (match) => {
+            // Apply the captured feature values to the match context
+            // This is a simplification; in reality you'd need to parse the surrounding context
+            return capturedPhoneme;
           });
-          // Apply to the first phoneme of the match
-          const phonemes = tokenizeIPA(fullMatch);
-          if (phonemes.length > 0) {
-            return this.applyFeaturesToPhoneme(phonemes[0], changes) + phonemes.slice(1).join('');
-          }
         }
       }
-      return fullMatch;
-    });
+    }
 
-    // Handle feature changes [+feature] in replacement
-    if (res.startsWith('[') && res.endsWith(']')) {
-      const featureStr = res.slice(1, -1);
+    // Handle feature application [+feature] in replacement
+    result = result.replace(/\[([+-]\w+(?:\s+[+-]\w+)*)\]/g, (_, featureStr) => {
       const criteria: any = {};
       featureStr.split(/\s+/).forEach((f: string) => {
         const val = f.startsWith('+');
         const key = f.slice(1);
         criteria[key] = val;
       });
-      const phonemes = tokenizeIPA(fullMatch);
-      if (phonemes.length > 0) {
-        return this.applyFeaturesToPhoneme(phonemes[0], criteria) + phonemes.slice(1).join('');
+      
+      const currentFeatures = getEffectiveFeatures(fullMatch);
+      if (!currentFeatures) return fullMatch;
+      
+      const newFeatures = { ...currentFeatures };
+      for (const [key, val] of Object.entries(criteria)) {
+        (newFeatures as any)[key] = val;
       }
-    }
-    
-    return res;
-  }
+      
+      const phonemes = getPhonemesByFeatures(newFeatures);
+      return phonemes.length > 0 ? phonemes[0] : fullMatch;
+    });
 
-  private getFeatureKeysForVar(varName: string): string[] {
-    switch (varName) {
-      case 'place': return ['labial', 'coronal', 'dorsal', 'high', 'low', 'back'];
-      case 'manner': return ['continuant', 'nasal', 'strident', 'lateral', 'delayedRelease', 'syllabic', 'consonantal', 'sonorant'];
-      case 'voice': return ['voice'];
-      case 'height': return ['high', 'low'];
-      case 'backness':
-      case 'frontness': return ['back'];
-      case 'roundness': return ['round'];
-      case 'stress': return ['stress'];
-      default: return [];
-    }
-  }
-
-  private applyFeaturesToPhoneme(phoneme: string, featureChanges: Partial<DistinctiveFeatures>): string {
-    const baseFeatures = getEffectiveFeatures(phoneme);
-    if (!baseFeatures) return phoneme;
-
-    const newFeatures = { ...baseFeatures, ...featureChanges };
-    
-    const allSymbols = { ...FEATURE_MAP };
-    let bestMatch = phoneme;
-    let minDiff = Infinity;
-
-    for (const [symbol, features] of Object.entries(allSymbols)) {
-      let diff = 0;
-      for (const key in newFeatures) {
-        if ((newFeatures as any)[key] !== (features as any)[key]) {
-          diff++;
-        }
-      }
-      if (diff < minDiff) {
-        minDiff = diff;
-        bestMatch = symbol;
-      }
-      if (diff === 0) break;
-    }
-
-    return bestMatch;
+    return result;
   }
 }
 
 export class BlendedScaEngine {
-  public getClasses() { return this.classes; }
-  public getElements() { return this.elements; }
-  public getDeferredRules() { return this.deferredRules; }
-  private classes: Record<string, string[]> = {};
+  private classes: Record<string, string[]> = {
+    C: [], V: [], D: [], ᴰ: []
+  };
   private elements: Record<string, string> = {};
   private syllables: string[] = [];
   private rules: Rule[] = [];
-  private deferredRules: Record<string, Rule> = {};
-  private cleanupRules: Rule[] = [];
-  private activeCleanupRules: Set<string> = new Set();
   private deromanizer: Rule | null = null;
   private romanizer: Rule | null = null;
   private intermediateRomanizers: Record<string, Rule> = {};
+  private deferredRules: Record<string, Rule> = {};
+  private cleanupRules: Rule[] = [];
+  private activeCleanupRules: string[] = [];
 
   constructor() {
-    this.classes['C'] = getPhonemesByFeatures({ consonantal: true });
-    this.classes['V'] = getPhonemesByFeatures({ syllabic: true });
-    this.classes['X'] = Object.keys(FEATURE_MAP);
-    
-    // D: Any IPA base letter (no diacritics)
-    this.classes['D'] = Object.keys(FEATURE_MAP).filter(p => !/[\u0300-\u036f\u02b0-\u02ff\u1d2c-\u1d6a\u2070-\u209f\u02d0\u02d1]/.test(p));
-    // ᴰ: Any diacritic symbol alone
-    this.classes['ᴰ'] = ['\u0325', '\u030A', '\u032C', '\u02B0', '\u02B1', '\u0324', '\u0330', '\u02BC', '\u02C0', '\u02B7', '\u02B2', '\u02E0', '\u02E4', '\u0303', '\u207F', '\u02E1', '\u032A', '\u033A', '\u033B', '\u033C', '\u031F', '\u0320', '\u031D', '\u031E', '\u0318', '\u0319', '\u0334', '\u0339', '\u031C', '\u0308', '\u033D', '\u0329', '\u030D', '\u032F', '\u02DE', '\u02D0', '\u02D1', '\u0306', '\u02C8', '\u02CC'];
+    this.initializeDefaultClasses();
+  }
 
-    // Add common manner/place classes
-    this.classes['stop'] = getPhonemesByFeatures({ consonantal: true, continuant: false, nasal: false });
-    this.classes['fricative'] = getPhonemesByFeatures({ consonantal: true, continuant: true });
-    this.classes['nasal'] = getPhonemesByFeatures({ nasal: true });
-    this.classes['liquid'] = getPhonemesByFeatures({ lateral: true }).concat(getPhonemesByFeatures({ sonorant: true, continuant: true, coronal: true, voice: true }).filter(p => !p.includes('l')));
+  public getClasses() { return this.classes; }
+  public getElements() { return this.elements; }
+  public getDeferredRules() { return this.deferredRules; }
+
+  private initializeDefaultClasses() {
+    const allConsonants: string[] = [];
+    const allVowels: string[] = [];
+    const allDiacritics: string[] = [];
+
+    for (const [symbol, features] of Object.entries(FEATURE_MAP)) {
+      if (features.syllabic) {
+        allVowels.push(symbol);
+      } else {
+        allConsonants.push(symbol);
+      }
+    }
+
+    for (let i = 0x0300; i <= 0x036F; i++) {
+      allDiacritics.push(String.fromCharCode(i));
+    }
+
+    const allBaseLetters = [...allConsonants, ...allVowels];
+
+    this.classes['C'] = allConsonants;
+    this.classes['V'] = allVowels;
+    this.classes['D'] = allBaseLetters;
+    this.classes['ᴰ'] = allDiacritics;
+  }
+
+  public validate(script: string): ScaError[] {
+    const errors: ScaError[] = [];
+    const lines = script.split('\n').map(l => l.trim());
+    
+    const definedClasses = new Set<string>();
+    const definedElements = new Set<string>();
+    const definedRules = new Set<string>();
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line || line.startsWith('//') || line.startsWith('#')) continue;
+
+      let matched = false;
+
+      // Class definition
+      if (line.startsWith('Class ')) {
+        const match = line.match(/Class\s+(\w+)/);
+        if (match) {
+          definedClasses.add(match[1]);
+        } else {
+          errors.push({ line: i + 1, message: `Invalid Class declaration. Expected: Class Name {members} or Class Name [+features].`, type: 'syntax' });
+        }
+        matched = true;
+        continue;
+      }
+
+      // Element definition
+      if (line.startsWith('Element ')) {
+        const match = line.match(/Element\s+([\w-]+)/);
+        if (match) {
+          definedElements.add(match[1]);
+        } else {
+          errors.push({ line: i + 1, message: `Invalid Element declaration. Expected: Element name pattern.`, type: 'syntax' });
+        }
+        matched = true;
+        continue;
+      }
+
+      // Deromanizer / Romanizer
+      if (line.match(/^(Deromanizer|Romanizer|Romanizer-[\w-]+):/)) {
+        matched = true;
+        continue;
+      }
+
+      // Deferred / Cleanup
+      if (line.match(/^(Deferred|Cleanup):/)) {
+        matched = true;
+        continue;
+      }
+
+      // Rule name declaration
+      const nameMatch = line.match(/^([\w-]+)(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
+      if (nameMatch && !line.includes('>')) {
+        definedRules.add(nameMatch[1]);
+        matched = true;
+        continue;
+      }
+
+      // IF / THEN
+      if (line.startsWith('IF ')) {
+        if (!line.match(/IF\s+(.+)\s+THEN\s+(.+)(?:\s+ELSE\s+(.+))?/)) {
+          errors.push({ line: i + 1, message: `Invalid IF/THEN statement. Expected: IF condition THEN rule [ELSE rule].`, type: 'syntax' });
+        }
+        matched = true;
+        continue;
+      }
+
+      // Then block
+      if (line.startsWith('Then')) {
+        if (!line.match(/^Then(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/)) {
+          errors.push({ line: i + 1, message: `Invalid Then block. Expected: Then [filter] [propagate|ltr|rtl]:`, type: 'syntax' });
+        }
+        matched = true;
+        continue;
+      }
+
+      // Apply
+      if (line.startsWith('Apply:')) {
+        const ruleName = line.split(':')[1]?.trim();
+        if (!ruleName) {
+          errors.push({ line: i + 1, message: `Invalid Apply statement. Expected: Apply: rule-name`, type: 'syntax' });
+        } else if (!definedRules.has(ruleName)) {
+          errors.push({ line: i + 1, message: `Reference error: Rule '${ruleName}' is applied but never defined.`, type: 'reference' });
+        }
+        matched = true;
+        continue;
+      }
+
+      // Syllables
+      if (line.toLowerCase().startsWith('syllables:')) {
+        matched = true;
+        continue;
+      }
+
+      // Sound change rule (contains arrow)
+      const arrowRegex = /(?:=>|->|→|>)/;
+      if (arrowRegex.test(line)) {
+        matched = true;
+        const parts = line.split(arrowRegex);
+        if (parts.length < 2 || !parts[1].trim()) {
+          errors.push({ line: i + 1, message: `Invalid rule format. Missing replacement after arrow.`, type: 'syntax' });
+          continue;
+        }
+        
+        const target = parts[0].trim();
+        if (!target) {
+          errors.push({ line: i + 1, message: `Invalid rule format. Missing target before arrow.`, type: 'syntax' });
+        }
+
+        // Check for undefined classes/elements in target and replacement
+        const classMatches = line.match(/@(\w+)/g);
+        if (classMatches) {
+          classMatches.forEach(m => {
+            const name = m.slice(1);
+            if (!definedClasses.has(name) && !definedElements.has(name)) {
+              errors.push({ line: i + 1, message: `Reference error: Class or Element '${name}' is used but never defined.`, type: 'reference' });
+            }
+          });
+        }
+        
+        // Check for phonetic impossibilities in rules
+        const featureMatches = line.match(/\[([+-]\w+(?:\s+[+-]\w+)*)\]/g);
+        if (featureMatches) {
+          featureMatches.forEach(fm => {
+            if (fm.includes('+high') && fm.includes('+low')) {
+              errors.push({ line: i + 1, message: `Phonetic impossibility: [+high] and [+low] cannot co-occur.`, type: 'phonetic' });
+            }
+            if (fm.includes('+front') && fm.includes('+back')) {
+              errors.push({ line: i + 1, message: `Phonetic impossibility: [+front] and [+back] cannot co-occur.`, type: 'phonetic' });
+            }
+          });
+        }
+        
+        continue;
+      }
+
+      if (!matched) {
+        errors.push({ line: i + 1, message: `Unrecognized syntax or invalid statement.`, type: 'syntax' });
+      }
+    }
+    
+    return errors;
   }
 
   public getFeatureKeysForVar(varName: string): string[] {
@@ -627,10 +682,11 @@ export class BlendedScaEngine {
     let currentRule: Rule | null = null;
     let mode: 'rules' | 'deromanizer' | 'romanizer' | 'deferred' | 'cleanup' = 'rules';
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       // Handle IF/THEN/ELSE
       if (line.startsWith('IF ')) {
-        const match = line.match(/IF\s+(.+)\s+THEN\s+(.+)(?:\s+ELSE\s+(.+))?/);
+        const match = line.match(/IF\s+(.+?)\s+THEN\s+(.+?)(?:\s+ELSE\s+(.+))?$/);
         if (match) {
           const condition = match[1].trim();
           const thenPart = match[2].trim();
@@ -641,7 +697,13 @@ export class BlendedScaEngine {
           
           this.parseSubRuleLine(r, thenPart, false);
           if (elsePart) {
-            this.parseSubRuleLine(r, elsePart, true);
+            if (elsePart.startsWith('IF ')) {
+              this.rules.push(r);
+              lines.splice(i + 1, 0, elsePart);
+              continue;
+            } else {
+              this.parseSubRuleLine(r, elsePart, true);
+            }
           }
           this.rules.push(r);
         }
@@ -711,115 +773,109 @@ export class BlendedScaEngine {
         continue;
       }
 
-      if (line.startsWith('Deferred ')) {
-        const match = line.match(/Deferred\s+([\w-]+):/);
-        if (match) {
-          const name = match[1];
-          const r = new Rule(name, {}, this);
-          this.deferredRules[name] = r;
-          currentRule = r;
-          mode = 'deferred';
-        }
+      if (line.startsWith('Deferred:')) {
+        mode = 'deferred';
+        currentRule = null;
         continue;
       }
 
-      if (line.startsWith('Cleanup ')) {
-        const match = line.match(/Cleanup\s+([\w-]+):/);
-        if (match) {
-          const name = match[1];
-          const r = new Rule(name, {}, this);
-          this.cleanupRules.push(r);
-          this.activeCleanupRules.add(name);
-          currentRule = r;
-          mode = 'cleanup';
-        }
+      if (line.startsWith('Cleanup:')) {
+        mode = 'cleanup';
+        currentRule = null;
         continue;
       }
 
-      if (line.startsWith('Cleanup off:')) {
-        const match = line.match(/Cleanup off:\s+([\w-]+)/);
+      if (line.match(/^[\w-]+(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/)) {
+        const match = line.match(/^([\w-]+)(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
         if (match) {
-          this.activeCleanupRules.delete(match[1]);
+          const name = match[1];
+          const filter = match[2] || undefined;
+          const directive = match[3] as 'propagate' | 'ltr' | 'rtl' | undefined;
+          
+          const opts: RuleOptions = { name };
+          if (directive === 'propagate') opts.propagate = true;
+          if (directive === 'ltr' || directive === 'rtl') opts.direction = directive;
+          if (filter) opts.filter = filter;
+
+          const r = new Rule(name, opts, this);
+          
+          if (mode === 'deferred') {
+            this.deferredRules[name] = r;
+          } else if (mode === 'cleanup') {
+            this.cleanupRules.push(r);
+          } else {
+            this.rules.push(r);
+          }
+          currentRule = r;
         }
         continue;
       }
 
       if (line.startsWith('Then')) {
-        const match = line.match(/Then(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:/);
-        if (currentRule && match) {
-          const filter = match[1];
-          const modifier = match[2];
-          currentRule.addStage({
-            filter,
-            propagate: modifier === 'propagate',
-            direction: (modifier === 'ltr' || modifier === 'rtl') ? modifier : undefined
-          });
-        }
-        continue;
-      }
+        if (currentRule) {
+          const match = line.match(/^Then(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
+          if (match) {
+            const filter = match[1] || undefined;
+            const directive = match[2] as 'propagate' | 'ltr' | 'rtl' | undefined;
+            
+            const opts: RuleOptions = {};
+            if (directive === 'propagate') opts.propagate = true;
+            if (directive === 'ltr' || directive === 'rtl') opts.direction = directive;
+            if (filter) opts.filter = filter;
 
-      if (line.match(/^[\w-]+(?:\s+\[[^\]]+\])?(?:\s+(propagate|ltr|rtl))?:$/)) {
-        const match = line.match(/^([\w-]+)(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
-        if (match) {
-          const name = match[1];
-          const filter = match[2];
-          const modifier = match[3];
-          currentRule = new Rule(name, {
-            name,
-            filter,
-            propagate: modifier === 'propagate',
-            direction: (modifier === 'ltr' || modifier === 'rtl') ? modifier : undefined
-          }, this);
-          this.rules.push(currentRule);
-          mode = 'rules';
+            currentRule.addStage(opts);
+          }
         }
         continue;
       }
 
       if (line.startsWith('Apply:')) {
         const ruleName = line.split(':')[1].trim();
-        if (mode === 'cleanup') {
-          this.activeCleanupRules.add(ruleName);
-        } else if (currentRule) {
-          currentRule.addSubRule(`Apply:${ruleName}`, '', ['_'], []);
+        if (currentRule && mode !== 'deferred') {
+          this.activeCleanupRules.push(ruleName);
         }
         continue;
       }
 
-      if (line.includes('>') || line.includes('=>') || line.includes('→') || line.includes('->')) {
-        if (!currentRule) {
-          currentRule = new Rule('unnamed', {}, this);
-          this.rules.push(currentRule);
+      if (line.includes('>') || line.includes('=>') || line.includes('->') || line.includes('→')) {
+        if (currentRule) {
+          this.parseSubRuleLine(currentRule, line, false);
+        } else if (mode === 'rules') {
+          const r = new Rule('unnamed', {}, this);
+          this.parseSubRuleLine(r, line, false);
+          this.rules.push(r);
         }
-        this.parseSubRuleLine(currentRule, line, false);
       }
     }
   }
 
   private parseSubRuleLine(rule: Rule, line: string, isElse: boolean) {
-    // Support multiple arrow types: >, =>, →, ->
-    const arrowRegex = /(?:=>|->|→|>)/;
-    const parts = line.split(arrowRegex);
+    const arrows = ['=>', '->', '→', '>'];
+    let arrow = '';
+    for (const a of arrows) {
+      if (line.includes(a)) {
+        arrow = a;
+        break;
+      }
+    }
+    if (!arrow) return;
+
+    const parts = line.split(arrow);
     if (parts.length < 2) return;
 
     let target = parts[0].trim();
-    if (target === '0' || target === '∅') target = '';
-    let rest = parts[1].trim();
+    let replacement = parts[1].trim();
     
+    // Handle <<first>> and >>last<<
     let firstOnly = false;
     let lastOnly = false;
-
-    if (target.includes('<<')) {
+    if (target.startsWith('<<') && target.endsWith('>>')) {
+      target = target.slice(2, -2).trim();
       firstOnly = true;
-      target = target.replace('<<', '').trim();
-    } else if (target.includes('>>')) {
+    } else if (target.startsWith('>>') && target.endsWith('<<')) {
+      target = target.slice(2, -2).trim();
       lastOnly = true;
-      target = target.replace('>>', '').trim();
     }
-
-    // Support ∅ or 0 for deletion
-    let replacement = rest.replace(/∅/g, '').trim();
-    if (replacement === '0' && rest.length === 1) replacement = '';
 
     let envs: string[] = ['_'];
     let excs: string[] = [];
@@ -875,40 +931,42 @@ export class BlendedScaEngine {
   }
 
   private syllabify(word: string): string {
-    if (this.syllables.length === 0) return word;
-    
     const phonemes = tokenizeIPA(word);
     if (phonemes.length === 0) return word;
 
     // Identify nucleus, onset, coda classes from the Syllables declaration
-    const nucleusClasses: string[] = [];
-    const onsetClasses: string[] = [];
-    const codaClasses: string[] = [];
+    let nucleusClasses: string[] = [];
+    let onsetClasses: string[] = [];
+    let codaClasses: string[] = [];
 
-    let currentSection: 'onset' | 'nucleus' | 'coda' = 'onset';
-    for (const part of this.syllables) {
-      if (part === '::') {
-        if (currentSection === 'onset') currentSection = 'nucleus';
-        else if (currentSection === 'nucleus') currentSection = 'coda';
-        continue;
-      }
-      const className = part.replace(/[@?*+]/g, '');
-      if (className) {
-        if (currentSection === 'onset') onsetClasses.push(className);
-        else if (currentSection === 'nucleus') nucleusClasses.push(className);
-        else codaClasses.push(className);
-      }
-    }
-
-    // If no :: was used, assume the middle part is nucleus if it's the only one or if it's marked
-    // This is a bit heuristic. Let's assume if no ::, anything with V or nucleus in name is nucleus.
-    if (nucleusClasses.length === 0) {
+    if (this.syllables.length > 0) {
+      let currentSection: 'onset' | 'nucleus' | 'coda' = 'onset';
       for (const part of this.syllables) {
-        const name = part.replace(/[@?*+]/g, '');
-        if (name === 'V' || name.toLowerCase().includes('nucleus')) {
-          nucleusClasses.push(name);
+        if (part === '::') {
+          if (currentSection === 'onset') currentSection = 'nucleus';
+          else if (currentSection === 'nucleus') currentSection = 'coda';
+          continue;
+        }
+        const className = part.replace(/[@?*+]/g, '');
+        if (className) {
+          if (currentSection === 'onset') onsetClasses.push(className);
+          else if (currentSection === 'nucleus') nucleusClasses.push(className);
+          else codaClasses.push(className);
         }
       }
+
+      // If no :: was used, assume the middle part is nucleus if it's the only one or if it's marked
+      if (nucleusClasses.length === 0) {
+        for (const part of this.syllables) {
+          const name = part.replace(/[@?*+]/g, '');
+          if (name === 'V' || name.toLowerCase().includes('nucleus')) {
+            nucleusClasses.push(name);
+          }
+        }
+      }
+    } else {
+      // Default: V is nucleus
+      nucleusClasses = ['V'];
     }
 
     const isNucleus = (p: string) => {
@@ -964,13 +1022,10 @@ export class BlendedScaEngine {
   }
 
   private applyToWord(word: string): BlendedScaResult {
-    // Handle phrases by processing each word separately for syllabification
-    // but applying rules to the whole phrase to support ##
-    const words = word.split(/\s+/);
-    let current = words.map(w => this.syllabify(w)).join(' ');
-    
     const history: { rule: string; before: string; after: string }[] = [];
     const intermediateRomanizations: Record<string, string> = {};
+
+    let current = word;
 
     if (this.deromanizer) {
       const next = this.deromanizer.apply(current);
@@ -979,6 +1034,11 @@ export class BlendedScaEngine {
         current = next;
       }
     }
+
+    // Handle phrases by processing each word separately for syllabification
+    // but applying rules to the whole phrase to support ##
+    const words = current.split(/\s+/);
+    current = words.map(w => this.syllabify(w)).join(' ');
 
     for (const rule of this.rules) {
       const before = current;

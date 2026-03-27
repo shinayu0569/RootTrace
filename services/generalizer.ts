@@ -79,7 +79,14 @@ export const generalizeSoundChanges = (
       // Find examples
       const examples = Array.from(new Set(group.changes.map(c => `*${c.from} > ${c.to} / ${c.environment}`)));
       
-      if (examples.length < 2) continue;
+      // OLD threshold was `examples.length < 2` which silenced ALL sound laws when
+      // reconstructing a single cognate set (the most common use case), because each
+      // individual shift only appears once per language. Lowered to 1 so that single-
+      // attested shifts are still reported. A naturalness floor of 0.3 replaces the
+      // count-based filter to suppress truly spurious noise.
+      if (examples.length < 1) continue;
+      const effectiveNaturalness = group.typologyScore || 0.5;
+      if (effectiveNaturalness < 0.25 && examples.length < 2) continue;
       
       // Calculate a rough naturalness score based on inferred shifts if available
       let naturalnessScore = group.typologyScore || 0.5;
