@@ -262,7 +262,7 @@ const DIACRITIC_MAP: Record<string, Partial<DistinctiveFeatures>> = {
   '\u02E1': { lateral: true }, // Superscript l ˡ
   
   // --- Place / Tongue ---
-  '\u032A': { coronal: true }, // Dental bridge ̪
+  '\u032A': { alveolar: false }, // Dental bridge ̪ - dental t is NOT alveolar
   '\u033A': { coronal: true }, // Apical (inverted bridge) ̺
   '\u033B': { coronal: true }, // Laminal (square) ̻
   '\u033C': { labial: true, coronal: true }, // Linguolabial (seagull below) ̼

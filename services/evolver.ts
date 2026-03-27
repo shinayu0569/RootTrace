@@ -58,9 +58,21 @@ export async function autoEvolveEdge(
   sourceWords: string[],
   targetWords: string[],
   subStages: number,
+  subStageWeights?: number[],  // ADD: relative temporal positions for each intermediate stage
   model: string = 'gpt-4o-mini'
 ): Promise<EvolverStep[]> {
   const puter = await getPuter();
+  
+  // Build weights description for the prompt
+  let weightsDescription = '';
+  if (subStageWeights && subStageWeights.length > 0 && subStages > 0) {
+    weightsDescription = `
+    Intermediate stages should be distributed with these relative temporal weights: [${subStageWeights.join(', ')}].
+    A higher weight means that stage occurred later in the evolution (more changes accumulated).
+    A lower weight means that stage occurred earlier (fewer changes).
+    `;
+  }
+  
   const prompt = `
     You are a computational historical linguist. 
     Analyze the evolution from ${sourceName} to ${targetName}.
@@ -74,6 +86,7 @@ export async function autoEvolveEdge(
     Task:
     1. Identify the regular sound laws that transformed the source words into the target words.
     2. If subStages is ${subStages} > 0, hypothesize ${subStages} intermediate stages with their own names and sound laws.
+    ${weightsDescription}
     3. For each word, list the specific changes it underwent.
     4. Format the output as a JSON array of EvolverStep objects.
     
@@ -163,7 +176,8 @@ export async function algorithmicEvolveEdge(
   targetName: string,
   sourceWords: string[],
   targetWords: string[],
-  subStages: number
+  subStages: number,
+  subStageWeights?: number[]  // ADD: relative temporal positions for partitioning laws
 ): Promise<EvolverStep[]> {
   const allChanges: SoundChangeNote[] = [];
   const wordPairs = sourceWords.map((sw, i) => ({ source: sw, target: targetWords[i] || sw, index: i }));
@@ -181,7 +195,7 @@ export async function algorithmicEvolveEdge(
   const laws = generalizeSoundChanges(allChanges, []);
 
   // 3. Statistical Thresholding (Phase 4)
-  const regularLaws: string[] = [];
+  const regularLaws: { rule: string; naturalness: number }[] = [];
   const exceptions: string[] = [];
   const sporadicShifts: string[] = [];
 
@@ -199,10 +213,7 @@ export async function algorithmicEvolveEdge(
       
       if (changed) {
         validEnvironments++;
-        // Did it actually apply? Check if this word's pairwise changes included this law's components
         const wordChanges = allChanges.filter(c => c.language === `${i}`);
-        // A simple heuristic: if the predicted word is closer to the target word, or if the exact change is in wordChanges
-        // Let's check if the exact change is in wordChanges
         const applied = wordChanges.some(c => 
           law.examples.includes(`*${c.from} > ${c.to} / ${c.environment}`)
         );
@@ -219,11 +230,13 @@ export async function algorithmicEvolveEdge(
       const rate = actualApplications / validEnvironments;
       law.applicationRate = rate;
       
+      // Use naturalness score for stage partitioning
+      const naturalness = law.naturalnessScore ?? 0.5;
+      
       if (rate >= 0.95) {
-        regularLaws.push(law.ruleString);
+        regularLaws.push({ rule: law.ruleString, naturalness });
       } else if (rate < 0.15) {
         law.isSporadic = true;
-        // Classify sporadic shift
         let classification = "Sporadic Shift";
         const parts = law.ruleString.split('/');
         if (parts.length === 2) {
@@ -243,16 +256,90 @@ export async function algorithmicEvolveEdge(
         }
         sporadicShifts.push(`${law.ruleString} (${classification})`);
       } else {
-        // Between 15% and 95%, maybe a regular law with many exceptions, or a dialectal borrowing
-        regularLaws.push(law.ruleString);
+        regularLaws.push({ rule: law.ruleString, naturalness });
       }
     }
   }
 
   // 4. Build the steps
-  // For algorithmic, we just output one step for now, or divide by stage if we have stages
+  // If we have subStages and weights, partition laws by naturalness
+  const totalStages = subStages + 1; // +1 for final stage
+  
+  if (subStages > 0 && subStageWeights && subStageWeights.length === subStages) {
+    // Sort laws by naturalness (lower = more unusual = later)
+    const sortedLaws = [...regularLaws].sort((a, b) => a.naturalness - b.naturalness);
+    
+    // Normalize weights to cumulative thresholds
+    const cumulativeWeights = subStageWeights.reduce((acc, w, i) => {
+      acc.push((acc[i - 1] || 0) + w);
+      return acc;
+    }, [] as number[]);
+    const totalWeight = cumulativeWeights[cumulativeWeights.length - 1] || 1;
+    
+    // Partition laws into stages based on weights
+    const stageLaws: string[][] = Array(subStages + 1).fill(null).map(() => []);
+    
+    sortedLaws.forEach((law, idx) => {
+      const position = idx / sortedLaws.length; // 0 to 1
+      // Find which stage this law belongs to
+      let stageIdx = 0;
+      for (let i = 0; i < cumulativeWeights.length; i++) {
+        if (position <= cumulativeWeights[i] / totalWeight) {
+          stageIdx = i;
+          break;
+        }
+      }
+      // If beyond all intermediate stages, put in final stage
+      if (stageIdx >= subStages) stageIdx = subStages;
+      stageLaws[stageIdx].push(law.rule);
+    });
+    
+    // Add sporadic shifts to the last stage
+    sporadicShifts.forEach(s => stageLaws[subStages].push(s.split(' (')[0]));
+    
+    // Build steps for each stage
+    const steps: EvolverStep[] = [];
+    let currentWords = [...sourceWords];
+    
+    for (let stage = 0; stage <= subStages; stage++) {
+      const stageName = stage === subStages 
+        ? `Evolution to ${targetName}`
+        : `Intermediate Stage ${stage + 1}`;
+      
+      if (stageLaws[stage].length > 0) {
+        const shiftResults = applyShifts(currentWords, stageLaws[stage].join('\n'));
+        currentWords = shiftResults.map(r => r.final);
+        
+        steps.push({
+          stepName: stageName,
+          soundLaws: stageLaws[stage],
+          exceptions: stage === subStages ? exceptions : [],
+          sporadicShifts: stage === subStages ? sporadicShifts : [],
+          words: sourceWords.map((sw, i) => ({
+            ancestor: sw,
+            result: shiftResults[i]?.final || sw,
+            changes: shiftResults[i]?.history.map(h => h.rule) || []
+          }))
+        });
+      }
+    }
+    
+    return steps.length > 0 ? steps : [{
+      stepName: `Evolution to ${targetName}`,
+      soundLaws: [...regularLaws.map(l => l.rule), ...sporadicShifts.map(s => s.split(' (')[0])],
+      exceptions,
+      sporadicShifts,
+      words: sourceWords.map((sw, i) => ({
+        ancestor: sw,
+        result: targetWords[i] || sw,
+        changes: []
+      }))
+    }];
+  }
+  
+  // Default: single step
   const stepName = `Evolution to ${targetName}`;
-  const soundLawsToApply = [...regularLaws, ...sporadicShifts.map(s => s.split(' (')[0])];
+  const soundLawsToApply = [...regularLaws.map(l => l.rule), ...sporadicShifts.map(s => s.split(' (')[0])];
   
   const finalShiftResults = applyShifts(sourceWords, soundLawsToApply.join('\n'));
   

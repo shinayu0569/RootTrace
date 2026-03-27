@@ -1,23 +1,46 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, Loader2, AlertCircle, History, HelpCircle, X } from 'lucide-react';
-import { BlendedScaEngine } from '@/services/blendedSca';
+import { BlendedScaEngine, ScaError } from '@/services/blendedSca';
 import { featureMatrix } from '@/services/featureMatrix';
+import SyntaxGuide from './SyntaxGuide';
 
 export default function SoundChangeApplier() {
-  const [rules, setRules] = useState('Class C: [p t k b d g]\nClass V: [a e i o u]\n\nrule-name:\n  a => e / _ i');
+  const [rules, setRules] = useState('Class C {p, t, k, b, d, g}\nClass V {a, e, i, o, u}\n\nrule-name:\n  a => e / _ i');
   const [inputWords, setInputWords] = useState('p a t i\nk a t u');
   const [outputWords, setOutputWords] = useState<string[]>([]);
   const [history, setHistory] = useState<{ word: string, changes: { rule: string, result: string }[] }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<ScaError[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     featureMatrix.init();
   }, []);
 
+  useEffect(() => {
+    const engine = new BlendedScaEngine();
+    const errors = engine.validate(rules);
+    setValidationErrors(errors);
+  }, [rules]);
+
+  const handleScroll = () => {
+    if (textareaRef.current && backdropRef.current) {
+      backdropRef.current.scrollTop = textareaRef.current.scrollTop;
+      backdropRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  };
+
   const handleApply = async () => {
+    if (validationErrors.length > 0) {
+      setError('Please fix the syntax errors in your rules before applying.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setOutputWords([]);
@@ -55,11 +78,11 @@ export default function SoundChangeApplier() {
               <h2 className="text-lg font-bold text-rt-text uppercase tracking-widest">Sound Change Rules</h2>
               <div className="flex items-center gap-4">
                 <button 
-                  onClick={() => setShowHelp(!showHelp)}
-                  className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors ${showHelp ? 'text-rt-accent' : 'text-rt-muted hover:text-rt-text'}`}
+                  onClick={() => setShowHelp(true)}
+                  className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-rt-muted hover:text-rt-accent transition-colors"
                 >
                   <HelpCircle className="w-3 h-3" />
-                  Help
+                  Guide
                 </button>
                 <button 
                   onClick={() => setShowHistory(!showHistory)}
@@ -71,49 +94,59 @@ export default function SoundChangeApplier() {
               </div>
             </div>
             
-            {showHelp && (
-              <div className="mb-4 p-4 bg-rt-card border border-rt-accent/30 rounded-2xl relative">
-                <button onClick={() => setShowHelp(false)} className="absolute top-2 right-2 text-rt-muted hover:text-rt-text">
-                  <X className="w-4 h-4" />
-                </button>
-                <h3 className="text-xs font-black uppercase tracking-widest text-rt-accent mb-2">Syntax Guide</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[10px] font-mono text-rt-text">
-                  <div className="space-y-1">
-                    <p className="font-bold text-rt-muted">Basic Rules:</p>
-                    <p>a &gt; e / _ i (Fronting)</p>
-                    <p>C {`{p t k}`} &gt; {`{b d g}`} / V _ V (Voicing)</p>
-                    <p>s &gt; 0 / _ # (Deletion)</p>
-                    <p>0 &gt; i / C _ C (Epenthesis)</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="font-bold text-rt-muted">Features:</p>
-                    <p>S[+fortis] &gt; S1[+voiceless] (Feature change)</p>
-                    <p>[+nasal] &gt; [+voiced] / _ V (Standalone)</p>
-                    <p>V[@place] &gt; V1[@place] / _ (Assimilation)</p>
-                    <p>V1 V1 &gt; V1: (Gemination)</p>
-                  </div>
-                </div>
-              </div>
-            )}
+            {showHelp && <SyntaxGuide onClose={() => setShowHelp(false)} />}
 
             <p className="text-xs text-rt-muted font-bold uppercase tracking-wider mb-4">
               Define classes and rules. Supports Then: blocks, LTR/RTL, and feature changes.
             </p>
-            <textarea
-              value={rules}
-              onChange={(e) => setRules(e.target.value)}
-              className="w-full h-80 p-4 font-mono text-sm bg-rt-input border border-rt-border rounded-2xl text-rt-text outline-none focus:border-rt-accent transition-all resize-none"
-              placeholder="Class C: [p t k]\nrule-name:\n  a => e / _ i"
-            />
+            <div className="relative w-full h-64 lg:h-80 bg-rt-input border border-rt-border rounded-2xl focus-within:border-rt-accent transition-all overflow-hidden">
+              <div 
+                ref={backdropRef}
+                className="absolute inset-0 p-4 font-mono text-sm overflow-hidden whitespace-pre-wrap break-words text-transparent pointer-events-none"
+                aria-hidden="true"
+              >
+                {rules.split('\n').map((line, i, arr) => {
+                  const error = validationErrors.find(e => e.line === i + 1);
+                  const isLast = i === arr.length - 1;
+                  const displayLine = (line === '' && error) ? ' ' : line;
+                  const content = displayLine + (isLast ? '' : '\n');
+                  if (error) {
+                    return <span key={i} className="bg-red-500/30 border-b border-red-500/50" title={error.message}>{content}</span>;
+                  }
+                  return <span key={i}>{content}</span>;
+                })}
+              </div>
+              <textarea
+                ref={textareaRef}
+                value={rules}
+                onChange={(e) => setRules(e.target.value)}
+                onScroll={handleScroll}
+                className="absolute inset-0 w-full h-full p-4 font-mono text-sm bg-transparent text-rt-text outline-none resize-none z-10"
+                placeholder={"Class C {p, t, k}\nrule-name:\n  a => e / _ i"}
+                spellCheck={false}
+              />
+            </div>
+            {validationErrors.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {validationErrors.map((err, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs text-red-400 bg-red-500/10 p-2 rounded-lg border border-red-500/20">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <div>
+                      <span className="font-bold">Line {err.line}:</span> {err.message}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
             <h2 className="text-lg font-bold text-rt-text uppercase tracking-widest mb-2">Input Words</h2>
-            <p className="text-xs text-rt-muted font-bold uppercase tracking-wider mb-4">One word per line. Use spaces between symbols.</p>
+            <p className="text-xs text-rt-muted font-bold uppercase tracking-wider mb-4">One word per line.</p>
             <textarea
               value={inputWords}
               onChange={(e) => setInputWords(e.target.value)}
-              className="w-full h-32 p-4 font-mono text-sm bg-rt-input border border-rt-border rounded-2xl text-rt-text outline-none focus:border-rt-accent transition-all resize-none"
+              className="w-full h-24 lg:h-32 p-4 font-mono text-sm bg-rt-input border border-rt-border rounded-2xl text-rt-text outline-none focus:border-rt-accent transition-all resize-none"
               placeholder="p a t a\nk a t i"
             />
           </div>
@@ -140,7 +173,7 @@ export default function SoundChangeApplier() {
             </div>
           )}
 
-          <div className="w-full h-[calc(100%-2rem)] min-h-[24rem] p-6 bg-rt-card border border-rt-border rounded-[2rem] overflow-y-auto shadow-xl">
+          <div className="w-full h-[50vh] lg:h-[calc(100%-2rem)] min-h-[16rem] lg:min-h-[24rem] p-6 bg-rt-card border border-rt-border rounded-[2rem] overflow-y-auto shadow-xl">
             {showHistory && history.length > 0 ? (
               <div className="space-y-8">
                 {history.map((item, i) => (
