@@ -1,6 +1,6 @@
 
 import { DistinctiveFeatures } from '../types';
-import { FEATURE_MAP, getEffectiveFeatures } from './phonetics';
+import { FEATURE_MAP, getEffectiveFeatures, getToneDistance } from './phonetics';
 
 // Extend DistinctiveFeatures to include the character symbol for rules that check specific segments
 export interface DistinctiveFeaturesWithSymbol extends DistinctiveFeatures {
@@ -46,7 +46,12 @@ export function analyzeFeatureDelta(p: DistinctiveFeatures, r: DistinctiveFeatur
   // Suprasegmentals
   if (p.long !== r.long) changes.push(r.long ? "lengthening" : "shortening");
   if (p.stress !== r.stress) changes.push(r.stress ? "stress assignment" : "destressing");
-  if (Math.abs(p.tone - r.tone) > 0.5) changes.push("tonal shift");
+  // Feature 4.3: Use getToneDistance for proper ToneContour comparison
+  if (p.tone && r.tone) {
+    if (getToneDistance(p.tone, r.tone) > 0.5) changes.push("tonal shift");
+  } else if (p.tone !== r.tone) {
+    changes.push("tonal shift");
+  }
 
   // Place (Consonants)
   if (p.consonantal) {

@@ -1,7 +1,6 @@
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Papa from 'papaparse';
-import { LanguageInput, ReconstructionMethod, ReconstructionResult, TreeNode, SoundChangeNote, EvolverNode } from './types';
+import { LanguageInput, ReconstructionMethod, ReconstructionResult, TreeNode, SoundChangeNote, EvolverNode, Paradigm, ParadigmCell } from './types';
 import { reconstructProtoWord, performMSA_to_proto, AnnotatedCandidate } from './services/engine';
 import { GAP_CHAR, describeFeatures, getPhonemesByFeatures, matchFeatures } from './services/phonetics';
 import { autoEvolveEdge, algorithmicEvolveEdge, EvolverEdgeResult } from './services/evolver';
@@ -9,6 +8,13 @@ import { phonemeDistance, nearestNeighbours } from './services/phonemeDistance';
 import { featureMatrix } from './services/featureMatrix';
 import { DistinctiveFeatures } from './types';
 import SoundChangeApplier from './src/components/SoundChangeApplier';
+
+// Global XMLSerializer for SVG export
+declare global {
+  interface XMLSerializer {
+    new (): XMLSerializer;
+  }
+}
 
 const TutorialModal = ({ onClose }: { onClose: () => void }) => {
   return (
@@ -258,6 +264,7 @@ const TreeVisualization = ({
   selectedLanguage: string | null;
   onSelect: (name: string | null) => void;
 }) => {
+  const svgRef = useRef<SVGSVGElement>(null);
   const NODE_WIDTH = 130;
   const X_GAP = 40;
   const LEVEL_HEIGHT = 120;
@@ -309,8 +316,20 @@ const TreeVisualization = ({
     };
     traverse(rootLayout);
 
-    const totalWidth = Math.max(currentLeafX, rootLayout.x + NODE_WIDTH + X_GAP);
-    const totalHeight = getMaxY(rootLayout) + NODE_HEIGHT + 60;
+    // Calculate actual bounds by finding min/max coordinates of all nodes
+    let minX = Infinity, maxX = -Infinity, maxY = 0;
+    nodes.forEach(node => {
+      const nodeLeft = node.x - NODE_WIDTH/2;
+      const nodeRight = node.x + NODE_WIDTH/2;
+      minX = Math.min(minX, nodeLeft);
+      maxX = Math.max(maxX, nodeRight);
+      maxY = Math.max(maxY, node.y);
+    });
+    
+    // Add padding and ensure minimum width for root
+    const padding = 40;
+    const totalWidth = Math.max(maxX + padding, rootLayout.x + NODE_WIDTH + X_GAP, currentLeafX);
+    const totalHeight = maxY + NODE_HEIGHT + 60;
 
     return { root: rootLayout, viewWidth: totalWidth, viewHeight: totalHeight, flatNodes: nodes, flatEdges: edges };
   }, [data]);
@@ -326,37 +345,173 @@ const TreeVisualization = ({
 
   if (!root) return null;
 
+  // Download function for PNG export
+  const downloadAsPNG = () => {
+    if (!svgRef.current) return;
+
+    // Clone the SVG to apply computed styles
+    const svgElement = svgRef.current;
+    const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+    
+    // Get the actual SVG dimensions from the viewBox or bounding box
+    let svgWidth = viewWidth;
+    let svgHeight = viewHeight;
+    
+    // Try to get more accurate dimensions from the SVG content
+    try {
+      const bbox = svgElement.getBBox();
+      if (bbox.width > 0 && bbox.height > 0) {
+        // Add padding to ensure all content is captured
+        const padding = 20;
+        svgWidth = Math.max(viewWidth, bbox.width + bbox.x + padding);
+        svgHeight = Math.max(viewHeight, bbox.height + bbox.y + padding);
+      }
+    } catch (e) {
+      // Fallback to viewBox dimensions
+    }
+    
+    // Set the cloned SVG dimensions explicitly
+    clonedSvg.setAttribute('width', String(svgWidth));
+    clonedSvg.setAttribute('height', String(svgHeight));
+    clonedSvg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+    
+    // Get computed styles from the original and apply to clone
+    const allElements = svgElement.querySelectorAll('*');
+    const clonedElements = clonedSvg.querySelectorAll('*');
+    
+    // Apply white background
+    clonedSvg.style.backgroundColor = '#ffffff';
+    
+    // Map CSS variables to actual colors
+    const styleMap: Record<string, string> = {
+      'var(--card-bg)': '#fafaf9',
+      'var(--text)': '#292524',
+      'var(--border)': '#e7e5e4',
+      'var(--accent)': '#ea580c',
+      'var(--muted)': '#78716c',
+      'var(--bg)': '#f5f5f4'
+    };
+    
+    // Process all elements and inline styles
+    allElements.forEach((el, i) => {
+      const computed = window.getComputedStyle(el);
+      const clonedEl = clonedElements[i];
+      
+      if (clonedEl) {
+        const fill = computed.fill;
+        const stroke = computed.stroke;
+        
+        if (fill && fill !== 'none') {
+          (clonedEl as SVGElement).setAttribute('fill', fill);
+        }
+        if (stroke && stroke !== 'none') {
+          (clonedEl as SVGElement).setAttribute('stroke', stroke);
+        }
+      }
+    });
+
+    // Manually fix colors based on attributes
+    const fixColors = (el: Element) => {
+      const attrs = ['fill', 'stroke'];
+      attrs.forEach(attr => {
+        const val = el.getAttribute(attr);
+        if (val && styleMap[val]) {
+          el.setAttribute(attr, styleMap[val]);
+        }
+      });
+      Array.from(el.children).forEach(fixColors);
+    };
+    fixColors(clonedSvg);
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Scale up for high quality
+    const scale = 2;
+    canvas.width = svgWidth * scale;
+    canvas.height = svgHeight * scale;
+    ctx.scale(scale, scale);
+
+    // Fill white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, svgWidth, svgHeight);
+
+    // Convert SVG to image
+    const svgData = new XMLSerializer().serializeToString(clonedSvg);
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    
+    const img = new Image();
+    img.onload = () => {
+      ctx?.drawImage(img, 0, 0);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `reconstruction-tree-${new Date().toISOString().split('T')[0]}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+      }, 'image/png');
+    };
+    img.src = URL.createObjectURL(svgBlob);
+  };
+
   return (
-    <div className="w-full h-full bg-rt-card rounded-2xl border border-rt-border p-4 flex items-center justify-center overflow-auto">
-      <svg 
-        viewBox={`0 0 ${viewWidth} ${viewHeight}`} 
-        width="100%" 
-        height="100%" 
-        preserveAspectRatio="xMidYMid meet"
-        className="w-full h-full max-h-full min-w-[300px]"
-        onClick={() => onSelect(null)}
-      >
-        {flatEdges.map((edge, i) => (
-          <TreeEdgeItem
-            key={`e-${edge.source.name}-${edge.target.name}`}
-            source={edge.source}
-            target={edge.target}
-            changeCount={changeCounts[edge.target.name] || 0}
-            isDimmed={selectedLanguage !== null && selectedLanguage !== edge.target.name}
-            onSelect={onSelect}
-          />
-        ))}
-        {flatNodes.map((node, i) => (
-          <TreeNodeItem
-            key={`n-${node.name}-${i}`}
-            node={node}
-            isRoot={node === root}
-            isSelected={selectedLanguage === node.name}
-            isDimmed={selectedLanguage !== null && node.name !== selectedLanguage && node !== root}
-            onSelect={onSelect}
-          />
-        ))}
-      </svg>
+    <div className="w-full h-full bg-rt-card rounded-2xl border border-rt-border p-2 sm:p-4 flex flex-col min-h-[300px] sm:min-h-[400px]">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
+        <h3 className="text-xs sm:text-sm font-serif font-bold uppercase text-rt-muted tracking-[0.2em] flex items-center gap-2 sm:gap-3">
+          <span className="w-2 h-2 rounded-full bg-rt-accent"></span>
+          Evolutionary Tree
+        </h3>
+        <button
+          onClick={downloadAsPNG}
+          className="px-3 sm:px-4 py-1.5 sm:py-2 bg-rt-accent text-white rounded-lg text-xs font-bold hover:bg-rt-accent/90 transition-colors flex items-center gap-1.5 sm:gap-2"
+          title="Download tree as PNG image"
+        >
+          <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-4-4l4.586-4.586a2 2 0 012.828 0L16 16m-4-4l4.586-4.586a2 2 0 012.828 0L16 16m-4-4l4.586-4.586a2 2 0 012.828 0L16 16M3 8l7.893 7.893a2 2 0 012.828 0L21 8M3 8l7.893 7.893a2 2 0 012.828 0L21 8M3 8l7.893 7.893a2 2 0 012.828 0L21 8" />
+          </svg>
+          <span className="hidden sm:inline">Download PNG</span>
+          <span className="sm:hidden">Save</span>
+        </button>
+      </div>
+      <div className="flex-1 overflow-auto min-h-0">
+        <svg 
+          ref={svgRef}
+          viewBox={`0 0 ${viewWidth} ${viewHeight}`} 
+          width="100%"
+          height="100%"
+          preserveAspectRatio="xMidYMid meet"
+          style={{ minWidth: '300px', minHeight: '200px' }}
+          onClick={() => onSelect(null)}
+          className="touch-manipulation"
+        >
+          {flatEdges.map((edge, i) => (
+            <TreeEdgeItem
+              key={`e-${edge.source.name}-${edge.target.name}`}
+              source={edge.source}
+              target={edge.target}
+              changeCount={changeCounts[edge.target.name] || 0}
+              isDimmed={selectedLanguage !== null && selectedLanguage !== edge.target.name}
+              onSelect={onSelect}
+            />
+          ))}
+          {flatNodes.map((node, i) => (
+            <TreeNodeItem
+              key={`n-${node.name}-${i}`}
+              node={node}
+              isRoot={node === root}
+              isSelected={selectedLanguage === node.name}
+              isDimmed={selectedLanguage !== null && node.name !== selectedLanguage && node !== root}
+              onSelect={onSelect}
+            />
+          ))}
+        </svg>
+      </div>
     </div>
   );
 };
@@ -370,6 +525,10 @@ const LanguageInputNode: React.FC<{
   onAddParent?: (path: number[]) => void;
   selectedLang: string | null;
   onSelectLang: (name: string | null) => void;
+  // Feature 5.7: Multi-selection for subgrouping
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (name: string) => void;
   depth?: number;
 }> = ({
   lang,
@@ -380,6 +539,10 @@ const LanguageInputNode: React.FC<{
   onAddParent,
   selectedLang,
   onSelectLang,
+  // Feature 5.7 props
+  isSelectionMode = false,
+  isSelected = false,
+  onToggleSelect,
   depth = 0
 }) => {
   const isUnattested = lang.isUnattested || false;
@@ -390,17 +553,43 @@ const LanguageInputNode: React.FC<{
         className={`bg-rt-card border p-4 rounded-2xl group relative transition-all ${
           isUnattested 
             ? 'border-dashed border-amber-500/50 bg-amber-500/5' 
-            : selectedLang === lang.name || selectedLang === `${lang.name} (Spelling)` 
-              ? 'border-rt-accent bg-rt-accent/10' 
-              : 'border-rt-border hover:border-rt-accent/50'
+            : isSelected
+              ? 'border-rt-accent bg-rt-accent/10 shadow-lg shadow-rt-accent/10'
+              : selectedLang === lang.name || selectedLang === `${lang.name} (Spelling)` 
+                ? 'border-rt-accent bg-rt-accent/10' 
+                : 'border-rt-border hover:border-rt-accent/50'
         }`}
-        onClick={(e) => { e.stopPropagation(); onSelectLang(selectedLang === lang.name ? null : lang.name); }}
+        onClick={(e) => { 
+          e.stopPropagation(); 
+          if (isSelectionMode && depth === 0 && onToggleSelect) {
+            onToggleSelect(lang.name);
+          } else {
+            onSelectLang(selectedLang === lang.name ? null : lang.name); 
+          }
+        }}
       >
-        {/* Unattested indicator */}
-        {isUnattested && (
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-            <span className="text-lg font-bold">*</span>
-            <span className="text-[10px] font-bold uppercase tracking-wider">Unattested</span>
+        {/* Selection checkbox - visible during selection mode */}
+        {isSelectionMode && depth === 0 && onToggleSelect && (
+          <div 
+            className="absolute top-3 left-3 z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all cursor-pointer ${
+              isSelected 
+                ? 'bg-rt-accent border-rt-accent' 
+                : 'bg-rt-input border-rt-border hover:border-rt-accent/50'
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelect(lang.name);
+            }}
+            >
+              {isSelected && (
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              )}
+            </div>
           </div>
         )}
         
@@ -680,9 +869,14 @@ export default function App() {
   
   // New state for interaction
   const [selectedLang, setSelectedLang] = useState<string | null>(null);
+  
+  // Multi-selection state for subgrouping (Feature 5.7)
+  const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
 
   // Custom Parameters
-  const [mcmcIterations, setMcmcIterations] = useState<number>(3000);
+  // Feature 2.3: Increased default iterations to 10,000 for multi-chain MCMC convergence
+  const [mcmcIterations, setMcmcIterations] = useState<number>(10000);
   const [gapPenalty, setGapPenalty] = useState<number>(10);
   const [unknownCharPenalty, setUnknownCharPenalty] = useState<number>(8);
   const [showSettings, setShowSettings] = useState(false);
@@ -707,6 +901,11 @@ export default function App() {
   const [evolverResults, setEvolverResults] = useState<EvolverEdgeResult[]>([]);
   const [isEvolving, setIsEvolving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  // Feature 5.3: Paradigm/Conjugation Layer State
+  const [paradigms, setParadigms] = useState<Paradigm[]>([]);
+  const [activeParadigmId, setActiveParadigmId] = useState<string | null>(null);
+  const [showParadigmPanel, setShowParadigmPanel] = useState(false);
   
   // New Auto-Evolver settings
   const [evolverMode, setEvolverMode] = useState<'ai' | 'algorithmic'>('ai');
@@ -779,6 +978,31 @@ export default function App() {
       protoTokens: newProtoTokens,
       alignmentMatrix: newAlignment
     });
+  };
+
+  const exportToEvolver = () => {
+    if (!result) return;
+    
+    // Helper to convert LanguageInput to EvolverNode while preserving hierarchy
+    const convertToEvolverNode = (input: LanguageInput): EvolverNode => ({
+      id: input.id,
+      name: input.name,
+      wordsText: input.word,
+      subStages: 0,
+      descendants: input.descendants ? input.descendants.map(convertToEvolverNode) : []
+    });
+    
+    // Create the evolver node structure with proper hierarchy
+    const protoNode: EvolverNode = {
+      id: 'proto-' + Date.now(),
+      name: 'Proto-' + (inputs[0]?.name ?? 'Language'),
+      wordsText: result.protoForm.replace(/^\*/, ''), // Remove asterisk prefix if present
+      subStages: 0,
+      descendants: inputs.map(convertToEvolverNode)
+    };
+    
+    setEvolverData(protoNode);
+    setAppMode('evolver');
   };
 
   useEffect(() => { runReconstruction(); }, []);
@@ -858,6 +1082,49 @@ export default function App() {
     
     newNodes[idx] = newParent;
     setInputs(newNodes);
+    setIsDirty(true);
+  };
+
+  /**
+   * Feature 5.7: Subgrouping Architecture - Group selected languages as siblings under a new unattested parent
+   */
+  const cancelSelection = () => {
+    setSelectedLanguages(new Set());
+    setIsSelectionMode(false);
+  };
+
+  const handleGroupAsSiblings = () => {
+    if (selectedLanguages.size < 2) return;
+    
+    const selectedArray = Array.from(selectedLanguages);
+    const selectedIndices = selectedArray.map(name => inputs.findIndex(n => n.name === name)).filter(idx => idx !== -1).sort((a, b) => b - a);
+    
+    if (selectedIndices.length < 2) return;
+    
+    // Extract selected nodes (in reverse order to maintain indices)
+    const selectedNodes: LanguageInput[] = [];
+    const remainingNodes = [...inputs];
+    
+    for (const idx of selectedIndices) {
+      selectedNodes.unshift(remainingNodes.splice(idx, 1)[0]);
+    }
+    
+    // Create new unattested parent node
+    const parentName = selectedNodes[0]?.name ? 'Proto-' + selectedNodes[0].name : 'Proto-Subgroup';
+    const newParent: LanguageInput = {
+      id: Date.now().toString(),
+      name: parentName,
+      word: '',
+      isUnattested: true,
+      descendants: selectedNodes
+    };
+    
+    // Add parent back to inputs
+    remainingNodes.push(newParent);
+    
+    setInputs(remainingNodes);
+    setSelectedLanguages(new Set());
+    setIsSelectionMode(false); // Exit selection mode after grouping
     setIsDirty(true);
   };
 
@@ -1051,6 +1318,46 @@ export default function App() {
     return result.soundChanges.filter(sc => sc.language === selectedLang || sc.language === `${selectedLang} (Spelling)`);
   }, [result, selectedLang]);
 
+  // Feature 5.3: Paradigm management functions
+  const addParadigm = (lexeme: string, paradigmType: Paradigm['paradigmType'], languageId: string, languageName: string) => {
+    const newParadigm: Paradigm = {
+      id: Date.now().toString(),
+      lexeme,
+      paradigmType,
+      languageId,
+      languageName,
+      cells: []
+    };
+    setParadigms([...paradigms, newParadigm]);
+    setActiveParadigmId(newParadigm.id);
+  };
+
+  const updateParadigmCell = (paradigmId: string, cellIndex: number, updates: Partial<ParadigmCell>) => {
+    setParadigms(paradigms.map(p => {
+      if (p.id !== paradigmId) return p;
+      const newCells = [...p.cells];
+      newCells[cellIndex] = { ...newCells[cellIndex], ...updates };
+      return { ...p, cells: newCells };
+    }));
+  };
+
+  const addParadigmCell = (paradigmId: string, form: string, gloss: string) => {
+    setParadigms(paradigms.map(p => {
+      if (p.id !== paradigmId) return p;
+      return { 
+        ...p, 
+        cells: [...p.cells, { form, gloss, isIrregular: false }]
+      };
+    }));
+  };
+
+  const removeParadigm = (paradigmId: string) => {
+    setParadigms(paradigms.filter(p => p.id !== paradigmId));
+    if (activeParadigmId === paradigmId) {
+      setActiveParadigmId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-rt-bg text-rt-text p-6 md:p-10 font-sans selection:bg-rt-accent/30 transition-colors duration-300">
       <header className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12 border-b border-rt-border pb-10 relative">
@@ -1144,7 +1451,7 @@ export default function App() {
                   <span className="text-[10px] text-rt-accent font-mono">{mcmcIterations}</span>
                 </div>
                 <input 
-                  type="range" min="1000" max="10000" step="500" 
+                  type="range" min="1000" max="20000" step="500" 
                   value={mcmcIterations} 
                   onChange={e => { setMcmcIterations(Number(e.target.value)); setIsDirty(true); }}
                   className="w-full accent-rt-accent"
@@ -1206,7 +1513,63 @@ export default function App() {
               </button>
             </div>
           </div>
-          <div className="space-y-2 max-h-[550px] overflow-y-auto pr-3 custom-scrollbar">
+          <div className="space-y-2 max-h-[550px] overflow-y-auto pr-3 custom-scrollbar relative">
+            {/* Feature 5.7: Selection mode controls */}
+            {!isSelectionMode ? (
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] text-rt-muted">{inputs.length} language{inputs.length !== 1 ? 's' : ''}</span>
+                {inputs.length >= 2 && (
+                  <button
+                    onClick={() => setIsSelectionMode(true)}
+                    className="flex items-center gap-1.5 text-[10px] font-bold bg-rt-input hover:bg-rt-accent/10 hover:text-rt-accent px-3 py-1.5 rounded-lg border border-rt-border hover:border-rt-accent/30 transition-all"
+                    title="Select multiple languages to group as siblings"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="7" height="7" rx="1"/>
+                      <rect x="14" y="3" width="7" height="7" rx="1"/>
+                      <rect x="14" y="14" width="7" height="7" rx="1"/>
+                      <rect x="3" y="14" width="7" height="7" rx="1"/>
+                    </svg>
+                    Group Languages
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* Floating action bar during selection mode */
+              <div className="sticky top-0 z-20 bg-rt-card border border-rt-accent/30 rounded-xl p-3 mb-3 shadow-lg">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-rt-accent">
+                      {selectedLanguages.size} selected
+                    </span>
+                    {selectedLanguages.size < 2 && (
+                      <span className="text-[9px] text-rt-muted">(select 2+ to group)</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={cancelSelection}
+                      className="text-[9px] font-bold bg-rt-input hover:bg-rt-border px-3 py-1.5 rounded-lg border border-rt-border transition-all text-rt-muted"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleGroupAsSiblings}
+                      disabled={selectedLanguages.size < 2}
+                      className={`text-[9px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                        selectedLanguages.size >= 2
+                          ? 'bg-rt-accent text-white border-rt-accent hover:bg-rt-accent/90'
+                          : 'bg-rt-input text-rt-muted border-rt-border cursor-not-allowed'
+                      }`}
+                    >
+                      Group {selectedLanguages.size > 0 && `(${selectedLanguages.size})`}
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[9px] text-rt-muted mt-2">Click languages to select/deselect them</p>
+              </div>
+            )}
+            
             {inputs.map((lang, idx) => (
               <LanguageInputNode
                 key={lang.id}
@@ -1218,6 +1581,18 @@ export default function App() {
                 onAddParent={handleAddParent}
                 selectedLang={selectedLang}
                 onSelectLang={setSelectedLang}
+                // Feature 5.7: Pass selection props
+                isSelectionMode={isSelectionMode}
+                isSelected={selectedLanguages.has(lang.name)}
+                onToggleSelect={(name) => {
+                  const newSet = new Set(selectedLanguages);
+                  if (newSet.has(name)) {
+                    newSet.delete(name);
+                  } else {
+                    newSet.add(name);
+                  }
+                  setSelectedLanguages(newSet);
+                }}
               />
             ))}
           </div>
@@ -1243,6 +1618,20 @@ export default function App() {
                     ))}
                   </div>
                 )}
+                
+                {/* Export to Evolver Button - Feature 5.4 */}
+                <div className="mt-6 flex justify-center">
+                  <button
+                    onClick={exportToEvolver}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-rt-accent/10 hover:bg-rt-accent/20 border border-rt-accent/30 hover:border-rt-accent/50 rounded-xl text-rt-accent text-xs font-bold uppercase tracking-wider transition-all"
+                    title="Transfer reconstruction to Auto-Evolver for sound law analysis"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 5v14M5 12l7 7 7-7"/>
+                    </svg>
+                    Export to Evolver
+                  </button>
+                </div>
               </div>
 
               <div className="bg-rt-card border border-rt-border rounded-3xl p-4 sm:p-8 overflow-hidden backdrop-blur-sm shadow-xl">
@@ -1256,6 +1645,12 @@ export default function App() {
                   <div>
                     <h3 className="text-lg font-serif font-bold text-rt-text">Alignment Matrix</h3>
                     <p className="text-[10px] text-rt-muted mt-1 uppercase font-bold tracking-widest">Feature-Sensitive Segment Mapping</p>
+                    {result.regularityScores && result.regularityScores.length > 0 && (
+                      <p className="text-[10px] text-rt-warning/70 mt-1 italic">
+                        Note: Regularity scores are most meaningful in batch mode with multiple cognate sets. 
+                        Single-word regularity is computed but lacks statistical support.
+                      </p>
+                    )}
                   </div>
                   <span className="text-[10px] text-rt-accent/60 font-mono">Click segments to inspect posteriors</span>
                 </div>
@@ -1341,8 +1736,8 @@ export default function App() {
               )}
 
               {/* Stacked Layout for Tree and Sound Changes */}
-              <div className="h-[550px] flex flex-col w-full">
-                <h3 className="text-sm font-serif font-bold uppercase text-rt-muted tracking-[0.2em] mb-6 flex items-center gap-3">
+              <div className="h-[350px] sm:h-[450px] lg:h-[550px] flex flex-col w-full">
+                <h3 className="text-xs sm:text-sm font-serif font-bold uppercase text-rt-muted tracking-[0.2em] mb-3 sm:mb-6 flex items-center gap-2 sm:gap-3">
                   <span className="w-2 h-2 rounded-full bg-rt-accent"></span>
                   Evolutionary Tree
                 </h3>
@@ -1354,7 +1749,7 @@ export default function App() {
                 />
               </div>
 
-              <div className="h-[500px] flex flex-col w-full">
+              <div className="h-[350px] sm:h-[400px] lg:h-[500px] flex flex-col w-full">
                 <h3 className="text-sm font-serif font-bold uppercase text-rt-muted tracking-[0.2em] mb-6 flex items-center gap-3">
                   <span className="w-2 h-2 rounded-full bg-rt-success"></span>
                   {selectedLang ? `Changes in ${selectedLang}` : 'All Detected Trajectories'}
@@ -1386,8 +1781,8 @@ export default function App() {
               </div>
 
               {result.inferredShifts && result.inferredShifts.length > 0 && (
-                <div className="h-[400px] flex flex-col w-full">
-                  <h3 className="text-sm font-serif font-bold uppercase text-rt-warning tracking-[0.2em] mb-6 flex items-center gap-3">
+                <div className="h-[300px] sm:h-[350px] lg:h-[400px] flex flex-col w-full">
+                  <h3 className="text-xs sm:text-sm font-serif font-bold uppercase text-rt-warning tracking-[0.2em] mb-3 sm:mb-6 flex items-center gap-2 sm:gap-3">
                     <span className="w-2 h-2 rounded-full bg-rt-warning animate-pulse"></span>
                     Inferred Sound Shifts
                   </h3>
@@ -1412,8 +1807,8 @@ export default function App() {
               )}
 
               {result.generalizedLaws && result.generalizedLaws.length > 0 && (
-                <div className="h-[400px] flex flex-col w-full">
-                  <h3 className="text-sm font-serif font-bold uppercase text-rt-accent tracking-[0.2em] mb-6 flex items-center gap-3">
+                <div className="h-[300px] sm:h-[350px] lg:h-[400px] flex flex-col w-full">
+                  <h3 className="text-xs sm:text-sm font-serif font-bold uppercase text-rt-accent tracking-[0.2em] mb-3 sm:mb-6 flex items-center gap-2 sm:gap-3">
                     <span className="w-2 h-2 rounded-full bg-rt-accent animate-pulse"></span>
                     Generalized Sound Laws
                   </h3>
@@ -1465,8 +1860,8 @@ export default function App() {
               )}
 
               {result.exceptions && result.exceptions.length > 0 && (
-                <div className="h-[200px] flex flex-col w-full">
-                  <h3 className="text-sm font-serif font-bold uppercase text-rt-error tracking-[0.2em] mb-6 flex items-center gap-3">
+                <div className="h-[150px] sm:h-[200px] flex flex-col w-full">
+                  <h3 className="text-xs sm:text-sm font-serif font-bold uppercase text-rt-error tracking-[0.2em] mb-3 sm:mb-6 flex items-center gap-2 sm:gap-3">
                     <span className="w-2 h-2 rounded-full bg-rt-error animate-pulse"></span>
                     Exceptions / Possible Borrowings
                   </h3>
@@ -1481,11 +1876,11 @@ export default function App() {
               )}
             </>
           ) : (
-            <div className="h-[500px] border-2 border-dashed border-rt-border rounded-[3rem] flex flex-col items-center justify-center text-rt-muted animate-pulse bg-rt-input">
-              <div className="w-20 h-20 bg-rt-card flex items-center justify-center rounded-full mb-8 shadow-inner">
-                <svg className="w-10 h-10 opacity-10" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.450 0l-7 7a1 1 0 00.1 1.547L8 14.167v1.75l-4.783 1.966a1 1 0 00.328 1.917h12.91a1 1 0 00.328-1.917L12 15.917v-1.75l3.955-3.067a1 1 0 00.1-1.547l-7-7z" clipRule="evenodd" /></svg>
+            <div className="h-[300px] sm:h-[400px] lg:h-[500px] border-2 border-dashed border-rt-border rounded-[3rem] flex flex-col items-center justify-center text-rt-muted animate-pulse bg-rt-input">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-rt-card flex items-center justify-center rounded-full mb-4 sm:mb-8 shadow-inner">
+                <svg className="w-8 h-8 sm:w-10 sm:h-10 opacity-10" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.450 0l-7 7a1 1 0 00.1 1.547L8 14.167v1.75l-4.783 1.966a1 1 0 00.328 1.917h12.91a1 1 0 00.328-1.917L12 15.917v-1.75l3.955-3.067a1 1 0 00.1-1.547l-7-7z" clipRule="evenodd" /></svg>
               </div>
-              <p className="font-mono text-sm tracking-[0.5em] uppercase font-black opacity-20">Engine Idle</p>
+              <p className="font-mono text-xs sm:text-sm tracking-[0.5em] uppercase font-black opacity-20">Engine Idle</p>
             </div>
           )}
         </section>
@@ -1567,13 +1962,13 @@ export default function App() {
                       <option value="o1-preview">o1-preview</option>
                     </optgroup>
                     <optgroup label="Anthropic (via Puter)">
-                      <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-                      <option value="claude-3-opus">Claude 3 Opus</option>
-                      <option value="claude-3-haiku">Claude 3 Haiku</option>
+                      <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
+                      <option value="claude-3-opus-latest">Claude 3 Opus</option>
+                      <option value="claude-3-5-haiku-latest">Claude 3.5 Haiku</option>
                     </optgroup>
                     <optgroup label="Google (via Puter)">
-                      <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                      <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                      <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro</option>
+                      <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash</option>
                     </optgroup>
                     <optgroup label="xAI (via Puter)">
                       <option value="grok-beta">Grok Beta</option>
@@ -1709,6 +2104,10 @@ export default function App() {
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-in { animation: fade-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .touch-manipulation { touch-action: manipulation; }
+        @media (hover: hover) {
+          .touch-manipulation:hover { transform: scale(1.02); }
+        }
       `}</style>
       
       {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
