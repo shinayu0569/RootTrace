@@ -1,5 +1,5 @@
 
-import { DistinctiveFeatures } from '../types';
+import { DistinctiveFeatures, ToneContour } from '../types';
 import { scoreFeatureTransition } from './typologyMatrix';
 import { featureMatrix } from './featureMatrix';
 import { phonemeDistance } from './phonemeDistance';
@@ -42,7 +42,7 @@ const BASE_FEATURES: DistinctiveFeatures = {
   pharyngealized: false,
   long: false,
   stress: false,
-  tone: 0
+  // tone is optional (ToneContour), defaults to undefined
 };
 
 // Helper to build features by overriding base
@@ -223,7 +223,7 @@ export const FEATURE_MAP: Record<string, DistinctiveFeatures> = {
 // --- PILLAR 1: SONORITY SCALE ---
 // Higher = more sonorous. Used for Sonority Sequencing Principle (SSP)
 export const getSonority = (token: string): number => {
-  if (token === GAP_CHAR) return 0;
+  if (token === GAP_CHAR || token === '.') return 0; // Both gaps and syllable boundaries have 0 sonority
   const f = getEffectiveFeatures(token);
   if (!f) return 0;
 
@@ -293,27 +293,93 @@ const DIACRITIC_MAP: Record<string, Partial<DistinctiveFeatures>> = {
   '\u02C8': { stress: true }, // Primary stress ˈ
   '\u02CC': { stress: true }, // Secondary stress ˌ
 
-  // --- Tone (Generic Mapping) ---
-  '\u0301': { tone: 1 }, // Acute (High) ́
-  '\u0300': { tone: -1 }, // Grave (Low) ̀
-  '\u0304': { tone: 0.5 }, // Macron (Mid) ̄
-  '\u030C': { tone: 0.8 }, // Caron (Rising) ̌
-  '\u0302': { tone: -0.8 }, // Circumflex (Falling) ̂
-  '\u02E5': { tone: 2 }, // Extra high ˥
-  '\u02E6': { tone: 1 }, // High ˦
-  '\u02E7': { tone: 0 }, // Mid ˧
-  '\u02E8': { tone: -1 }, // Low ˨
-  '\u02E9': { tone: -2 }, // Extra low ˩
-  '\uA71B': { tone: 2 }, // Raised up arrow ꜛ
-  '\uA71C': { tone: -2 }, // Lowered down arrow ꜜ
+  // --- Tone (Feature 4.3: Tone Contour Representation) ---
+  // Chao tone letters: 1=low, 2=mid-low, 3=mid, 4=mid-high, 5=high
+  '\u0301': { tone: { levels: [5] } },       // Acute (High) ́
+  '\u0300': { tone: { levels: [1] } },       // Grave (Low) ̀
+  '\u0304': { tone: { levels: [3] } },       // Macron (Mid) ̄
+  '\u030C': { tone: { levels: [3, 5] } },   // Caron (Rising 35) ̌
+  '\u0302': { tone: { levels: [5, 3] } },     // Circumflex (Falling 53) ̂
+  '\u02E5': { tone: { levels: [5] } },       // Extra high ˥
+  '\u02E6': { tone: { levels: [4] } },       // High ˦
+  '\u02E7': { tone: { levels: [3] } },       // Mid ˧
+  '\u02E8': { tone: { levels: [2] } },      // Low ˨
+  '\u02E9': { tone: { levels: [1] } },       // Extra low ˩
+  '\uA71B': { tone: { levels: [4, 5] } },   // Raised up arrow ꜛ (rising)
+  '\uA71C': { tone: { levels: [5, 4] } },   // Lowered down arrow ꜜ (falling)
   '#': f({}), // Boundary marker
   ',': f({}), // Cognate set boundary marker
 };
 
 export const GAP_CHAR = '-';
-export const UNKNOWN_CHAR_PENALTY = 8;
-export const GAP_PENALTY = 10;
-export const BOUNDARY_PENALTY = 20;
+export const UNKNOWN_CHAR_PENALTY = 0.5;  // Reduced from 8 - now scaled to distance [0,1]
+export const GAP_PENALTY = 1.5;  // Reduced from 10 - gap should be ~2x avg mismatch, not 10x
+export const BOUNDARY_PENALTY = 2.0;  // Reduced from 20
+
+/**
+ * Feature 4.3: Calculate distance between two tone contours.
+ * Uses Euclidean distance between Chao tone letter arrays.
+ * Shorter arrays are padded with their last value.
+ */
+export const getToneDistance = (toneA?: ToneContour, toneB?: ToneContour): number => {
+  if (!toneA && !toneB) return 0;
+  if (!toneA || !toneB) return 2.0; // Max distance if one has tone and other doesn't
+  
+  const levelsA = toneA.levels;
+  const levelsB = toneB.levels;
+  const maxLen = Math.max(levelsA.length, levelsB.length);
+  
+  // Pad shorter array with its last value
+  const paddedA = [...levelsA];
+  const paddedB = [...levelsB];
+  while (paddedA.length < maxLen) paddedA.push(levelsA[levelsA.length - 1] ?? 3);
+  while (paddedB.length < maxLen) paddedB.push(levelsB[levelsB.length - 1] ?? 3);
+  
+  // Euclidean distance
+  let sumSquaredDiff = 0;
+  for (let i = 0; i < maxLen; i++) {
+    const diff = paddedA[i] - paddedB[i];
+    sumSquaredDiff += diff * diff;
+  }
+  
+  const distance = Math.sqrt(sumSquaredDiff / maxLen);
+  
+  // Add register penalty if different
+  if (toneA.register !== toneB.register) {
+    return distance + 0.5;
+  }
+  
+  return distance;
+};
+
+/**
+ * Feature 4.3: Parse tone contour from IPA tone letters or diacritics.
+ * Handles Chao tone letters (˥˦˧˨˩) and contour combinations.
+ */
+export const parseToneContour = (ipaString: string): ToneContour | undefined => {
+  const toneLevels: number[] = [];
+  
+  for (const char of ipaString) {
+    const code = char.charCodeAt(0);
+    // Chao tone letters: U+02E5 (˥) = extra-high (5) to U+02E9 (˩) = extra-low (1)
+    if (code >= 0x02E5 && code <= 0x02E9) {
+      const level = 5 - (code - 0x02E5); // ˥=5, ˦=4, ˧=3, ˨=2, ˩=1
+      toneLevels.push(level);
+    }
+  }
+  
+  if (toneLevels.length === 0) {
+    // Check for diacritic-based tones
+    if (ipaString.includes('\u0301')) return { levels: [5] }; // High
+    if (ipaString.includes('\u0300')) return { levels: [1] }; // Low
+    if (ipaString.includes('\u0304')) return { levels: [3] }; // Mid
+    if (ipaString.includes('\u030C')) return { levels: [3, 5] }; // Rising
+    if (ipaString.includes('\u0302')) return { levels: [5, 3] }; // Falling
+    return undefined;
+  }
+  
+  return { levels: toneLevels };
+};
 
 // Regex Components for IPA Tokenization
 export const baseRange = "a-zA-Z\\u00C0-\\u02AF\\u0370-\\u03FF\\u1D00-\\u1DBF\\u01C0-\\u01C3\\u0294\\u0295\\u02A1\\u02A2*";
@@ -330,6 +396,48 @@ const STRIP_REGEX = new RegExp(`[${combiningRange}${spacingModifierRange}${toneL
  * Computes the effective features of a phoneme segment (Base + Diacritics).
  */
 export const getEffectiveFeatures = (token: string): DistinctiveFeatures | null => {
+  // Special handling for syllable boundary
+  if (token === '.') {
+    return {
+      syllabic: false,
+      consonantal: false,
+      sonorant: false,
+      voice: false,
+      spreadGlottis: false,
+      constrictedGlottis: false,
+      continuant: false,
+      nasal: false,
+      strident: false,
+      lateral: false,
+      delayedRelease: false,
+      labial: false,
+      coronal: false,
+      dorsal: false,
+      pharyngeal: false,
+      laryngeal: false,
+      alveolar: false,
+      palatal: false,
+      velar: false,
+      uvular: false,
+      glottal: false,
+      retroflex: false,
+      high: false,
+      mid: false,
+      low: false,
+      front: false,
+      central: false,
+      back: false,
+      round: false,
+      tense: false,
+      labialized: false,
+      palatalized: false,
+      velarized: false,
+      pharyngealized: false,
+      long: false,
+      stress: false,
+    };
+  }
+
   // 1. Identify Base Character
   // Remove all known modifiers to find the base
   const baseChar = token.replace(STRIP_REGEX, '');
@@ -394,10 +502,10 @@ export const tokenizeIPA = (word: string): string[] => {
   return word.match(pattern) || [];
 };
 
-export const needlemanWunsch = (seqA: string[], seqB: string[], gapPenaltyParam: number = 10, unknownCharPenalty: number = 8): { alignedA: string[], alignedB: string[] } => {
-  const scoreMatch = 6;
+export const needlemanWunsch = (seqA: string[], seqB: string[], gapPenaltyParam: number = 1.5, unknownCharPenalty: number = 0.5): { alignedA: string[], alignedB: string[] } => {
+  const scoreMatch = 2.0;  // Reduced from 6 - now on same scale as gap penalty
   const baseGapPenalty = -gapPenaltyParam;
-  const baseTranspositionPenalty = -6; // Default penalty for metathesis
+  const baseTranspositionPenalty = -1.2; // Scaled proportionally
 
   const n = seqA.length;
   const m = seqB.length;
@@ -538,7 +646,8 @@ export const needlemanWunsch = (seqA: string[], seqB: string[], gapPenaltyParam:
 };
 
 export const describeFeatures = (char: string): string => {
-  if (char === '.') return "Syllable Break";
+  if (char === '.') return "Syllable Boundary";
+  if (char === GAP_CHAR) return "Gap";
   
   const f = getEffectiveFeatures(char);
   if (!f) return "Unknown Segment";
@@ -554,7 +663,12 @@ export const describeFeatures = (char: string): string => {
   if (f.spreadGlottis) parts.push("Aspirated");
   if (f.constrictedGlottis) parts.push("Glottalized/Ejective");
   
-  if (f.tone !== 0) parts.push(f.tone > 0 ? "High/Rising Tone" : "Low/Falling Tone");
+  if (f.tone) {
+    const toneDesc = f.tone.levels.length > 1 
+      ? `Tone ${f.tone.levels.join('-')}`
+      : `Tone ${f.tone.levels[0]}`;
+    parts.push(toneDesc);
+  }
 
   if (f.syllabic) parts.push("Vowel");
   else if (f.consonantal) parts.push("Consonant");

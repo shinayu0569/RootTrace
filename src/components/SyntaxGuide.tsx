@@ -7,18 +7,18 @@ interface SyntaxGuideProps {
 
 export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white dark:bg-[#1c1b18] w-full max-w-5xl h-[90vh] rounded-3xl overflow-hidden shadow-2xl flex flex-col border border-rt-border">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white dark:bg-[#1c1b18] w-full max-w-5xl h-[100vh] sm:h-[90vh] rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col border border-rt-border">
         {/* Header */}
-        <div className="bg-[#f8f7f4] dark:bg-[#232219] border-b border-rt-border p-6 flex justify-between items-start shrink-0">
+        <div className="bg-[#f8f7f4] dark:bg-[#232219] border-b border-rt-border p-4 sm:p-6 flex justify-between items-start shrink-0">
           <div>
-            <h1 className="text-2xl font-bold text-[#2d5fa3] dark:text-[#7aa8e0] tracking-tight mb-1">Blended SCA Syntax — Reference</h1>
-            <p className="text-sm text-[#6b6860] dark:text-[#9a9790] max-w-2xl">
+            <h1 className="text-lg sm:text-2xl font-bold text-[#2d5fa3] dark:text-[#7aa8e0] tracking-tight mb-1">Blended SCA Syntax — Reference</h1>
+            <p className="text-xs sm:text-sm text-[#6b6860] dark:text-[#9a9790] max-w-2xl">
               A sound change applier language that combines the zero-configuration ergonomics of Vulgarlang with the expressive power of Lexurgy SC.
             </p>
-            <div className="flex flex-wrap gap-2 mt-3">
-              {['Pre-built IPA inventory', 'Named & ordered rules', 'Feature variables', 'Propagation & harmony', 'Compound rules', 'Romanizers', 'Syllable-aware'].map(tag => (
-                <span key={tag} className="px-2 py-0.5 rounded-full bg-[#e8f0fb] dark:bg-[#1a2a40] text-[#1e4a80] dark:text-[#7aa8e0] text-[10px] font-bold border border-rt-border">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 mt-2 sm:mt-3">
+              {['Pre-built IPA inventory', 'Named & ordered rules', 'Feature variables', 'Propagation & harmony', 'Compound rules', 'Romanizers', 'Syllable-aware', 'Stress assignment', 'Chain shifts'].map(tag => (
+                <span key={tag} className="px-1.5 sm:px-2 py-0.5 rounded-full bg-[#e8f0fb] dark:bg-[#1a2a40] text-[#1e4a80] dark:text-[#7aa8e0] text-[9px] sm:text-[10px] font-bold border border-rt-border">
                   {tag}
                 </span>
               ))}
@@ -26,16 +26,16 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
           </div>
           <button 
             onClick={onClose}
-            className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors text-rt-muted hover:text-rt-text"
+            className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors text-rt-muted hover:text-rt-text shrink-0 ml-2"
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
 
         {/* Content Area */}
         <div className="flex-1 flex overflow-hidden">
-          {/* TOC Sidebar */}
-          <nav className="w-60 shrink-0 border-r border-rt-border p-6 overflow-y-auto bg-[#f8f7f4] dark:bg-[#232219] hidden md:block">
+          {/* TOC Sidebar - hidden on mobile */}
+          <nav className="w-56 lg:w-60 shrink-0 border-r border-rt-border p-4 lg:p-6 overflow-y-auto bg-[#f8f7f4] dark:bg-[#232219] hidden md:block">
             <div className="text-[10px] font-black uppercase tracking-widest text-[#6b6860] dark:text-[#9a9790] mb-4">Contents</div>
             <div className="space-y-1 text-xs">
               {[
@@ -59,6 +59,8 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                 { id: 'propagate', label: 'Propagation & direction' },
                 { id: 'deferred', label: 'Deferred & cleanup rules' },
                 { id: 'romanizers', label: 'Romanizers' },
+                { id: 'chain-shifts', label: 'Chain shifts' },
+                { id: 'stress', label: 'Stress assignment' },
                 { id: 'syllables', label: 'Syllable declarations' },
                 { id: 'classes', label: 'Class declarations' },
                 { id: 'elements', label: 'Element declarations' },
@@ -82,8 +84,8 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
           </nav>
 
           {/* Main Content */}
-          <div className="flex-1 overflow-y-auto p-8 scroll-smooth bg-white dark:bg-[#1c1b18] text-[#1a1917] dark:text-[#e8e5de]">
-            <div className="max-w-3xl mx-auto space-y-12 pb-20">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 scroll-smooth bg-white dark:bg-[#1c1b18] text-[#1a1917] dark:text-[#e8e5de]">
+            <div className="max-w-3xl mx-auto space-y-8 sm:space-y-12 pb-20">
               
               <section id="philosophy">
                 <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Design philosophy</h2>
@@ -120,11 +122,50 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
 
               <section id="chain-shifts">
                 <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Chain Shifts</h2>
-                <p className="mb-4">You can write chain shifts using multiple arrows. The engine automatically processes them in reverse order to simulate a simultaneous push/pull chain.</p>
-                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm mb-4">
-                  <span className="text-[#0e6f6a] dark:text-[#4ecac4]">i</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">e</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">a</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">o</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">u</span>
+                <p className="mb-4">Chain shifts model phonological changes where one sound "pushes" or "pulls" another in a sequence. Use <code>chain(push)</code> for push chains (changes propagate forward) or <code>chain(drag)</code> for drag chains (changes pull from the end).</p>
+                
+                <h3 className="text-lg font-semibold mt-6 mb-3">Push vs Drag Chains</h3>
+                <table className="w-full text-sm border-collapse mb-4">
+                  <thead>
+                    <tr className="bg-[#eae6de] dark:bg-[#2a2920] text-[10px] uppercase font-bold text-rt-muted">
+                      <th className="p-2 text-left border border-rt-border">Type</th>
+                      <th className="p-2 text-left border border-rt-border">Direction</th>
+                      <th className="p-2 text-left border border-rt-border">Behavior</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">chain(push)</td>
+                      <td className="p-2 border border-rt-border">Forward (initiator first)</td>
+                      <td className="p-2 border border-rt-border">Changes apply from the sound that triggers the chain</td>
+                    </tr>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">chain(drag)</td>
+                      <td className="p-2 border border-rt-border">Backward (destination first)</td>
+                      <td className="p-2 border border-rt-border">Changes apply from the "pulled" end, creating space</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2 mb-4">
+                  <p className="text-[#6b6860] italic">// Great Vowel Shift - drag chain (default)</p>
+                  <p><span className="text-rt-accent font-bold">chain(drag)</span> great-vowel-shift:</p>
+                  <p className="pl-4">iː &gt;&gt; əɪ &gt;&gt; aɪ</p>
+                  <p className="pl-4">eː &gt;&gt; iː</p>
+                  <p className="pl-4">aː &gt;&gt; eɪ</p>
+                  <p className="text-[#6b6860] italic mt-2">// Applies in stages: first aː→eɪ, eː→iː, iː→əɪ, then əɪ→aɪ</p>
                 </div>
-                <p className="text-sm text-rt-muted italic mb-4">This is equivalent to writing <code>o &gt; u</code>, then <code>a &gt; o</code>, then <code>e &gt; a</code>, then <code>i &gt; e</code>.</p>
+
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2">
+                  <p className="text-[#6b6860] italic">// Push chain - changes apply from initiator</p>
+                  <p><span className="text-rt-accent font-bold">chain(push)</span> raising:</p>
+                  <p className="pl-4">a &gt;&gt; e &gt;&gt; i</p>
+                  <p className="text-[#6b6860] italic mt-2">// Applies: first a→e, then newly created e→i</p>
+                </div>
+
+                <div className="border-l-4 border-[#2d5fa3] bg-[#f8f7f4] dark:bg-[#232219] p-4 rounded-r-xl text-sm italic mt-4">
+                  <strong>How it works:</strong> Drag chains (default) process changes in reverse order to avoid merging - when iː moves to əɪ, the original əɪ space is already being filled by something else. Push chains process changes in forward order, allowing the "push" to cascade through the system.
+                </div>
               </section>
 
               <section id="named">
@@ -360,12 +401,123 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                 </div>
               </section>
 
+              <section id="stress">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Stress Assignment</h2>
+                <p className="mb-4">The SCA can automatically assign stress based on predefined patterns. Stress is applied during syllabification and can be automatically fixed after sound changes.</p>
+                
+                <h3 className="text-lg font-semibold mt-6 mb-3">Predefined Patterns</h3>
+                <table className="w-full text-sm border-collapse mb-4">
+                  <thead>
+                    <tr className="bg-[#eae6de] dark:bg-[#2a2920] text-[10px] uppercase font-bold text-rt-muted">
+                      <th className="p-2 text-left border border-rt-border">Pattern</th>
+                      <th className="p-2 text-left border border-rt-border">Description</th>
+                      <th className="p-2 text-left border border-rt-border">Example (3 syllables)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { p: 'initial', d: 'First syllable', ex: 'ˈCV.CV.CV' },
+                      { p: 'final', d: 'Last syllable', ex: 'CV.CV.ˈCV' },
+                      { p: 'penultimate', d: 'Second-to-last', ex: 'CV.ˈCV.CV' },
+                      { p: 'antepenult', d: 'Third-to-last', ex: 'ˈCV.CV.CV.CV' },
+                      { p: 'trochaic', d: 'Strong-Weak alternating', ex: 'ˈCV.CV.ˈCV.CV' },
+                      { p: 'iambic', d: 'Weak-Strong alternating', ex: 'CV.ˈCV.CV.ˈCV' },
+                      { p: 'dactylic', d: 'Strong-Weak-Weak', ex: 'ˈCV.CV.CV.ˈCV.CV.CV' },
+                      { p: 'anapestic', d: 'Weak-Weak-Strong', ex: 'CV.CV.ˈCV.CV.CV.ˈCV' },
+                      { p: 'mobile', d: 'Rightmost heavy syllable', ex: 'Depends on syllable weight' },
+                    ].map(row => (
+                      <tr key={row.p} className="border-t border-rt-border">
+                        <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">{row.p}</td>
+                        <td className="p-2 border border-rt-border">{row.d}</td>
+                        <td className="p-2 font-mono border border-rt-border">{row.ex}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Custom Position Pattern</h3>
+                <p className="mb-4">Use <code>custom</code> with a specific syllable position to define your own stress placement. Positions are 0-indexed:</p>
+                
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2 mb-4">
+                  <p className="text-[#6b6860] italic">// Stress on the 4th syllable (0,1,2,3 = 4th)</p>
+                  <p><span className="text-rt-accent font-bold">Stress</span>: custom pos:3 auto-fix</p>
+                  <p className="text-[#6b6860] italic mt-2">// Stress on 3rd-to-last syllable (negative index)</p>
+                  <p><span className="text-rt-accent font-bold">Stress</span>: custom pos:-3 auto-fix</p>
+                  <p className="text-[#6b6860] italic mt-2">// Examples with 5-syllable word 'telecommunication':</p>
+                  <p className="text-[#6b6860] italic">// pos:0 → ˈte.le.co.mu.ni.ca.tion</p>
+                  <p className="text-[#6b6860] italic">// pos:2 → te.le.ˈco.mu.ni.ca.tion</p>
+                  <p className="text-[#6b6860] italic">// pos:-1 → te.le.co.mu.ni.ˈca.tion (final)</p>
+                  <p className="text-[#6b6860] italic">// pos:-2 → te.le.co.mu.ˈni.ca.tion (penult)</p>
+                </div>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Mobile Stress & Heavy Syllables</h3>
+                <p className="mb-4">Mobile stress moves to the rightmost "heavy" syllable (or leftmost if none are heavy). Define what makes a syllable heavy with the <code>heavy:</code> parameter:</p>
+                
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2 mb-4">
+                  <p className="text-[#6b6860] italic">// Mobile stress - moves to rightmost heavy syllable</p>
+                  <p><span className="text-rt-accent font-bold">Stress</span>: mobile heavy:VC auto-fix</p>
+                  <p className="text-[#6b6860] italic mt-2">// Heavy = closed syllable (V+C) or long vowel</p>
+                  <p className="text-[#6b6860] italic">// tel.e.graph → tel.ˈe.graph (second syllable is heavy VC)</p>
+                </div>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Auto-Fix Option</h3>
+                <p className="mb-4">Add <code>auto-fix</code> to reassign stress after each sound change rule. This ensures stress always remains on the intended syllable even as sounds change.</p>
+                
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2">
+                  <p className="text-[#6b6860] italic">// Penultimate stress with auto-fix</p>
+                  <p><span className="text-rt-accent font-bold">Stress</span>: penultimate auto-fix</p>
+                  <p className="pl-4">a &gt; ∅ / _#</p>
+                  <p className="text-[#6b6860] italic mt-2">// If final vowel deletes, stress moves to new penult</p>
+                </div>
+
+                <div className="border-l-4 border-[#2d5fa3] bg-[#f8f7f4] dark:bg-[#232219] p-4 rounded-r-xl text-sm italic mt-4">
+                  <strong>Safety enforcement:</strong> If a sound change creates an invalid stress situation (e.g., stress on a deleted syllable), the system automatically reassigns stress regardless of the auto-fix setting to prevent errors.
+                </div>
+              </section>
+
               <section id="syllables">
-                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Syllable declarations</h2>
-                <p className="mb-4">A <code>Syllables:</code> block tells the engine what syllable shapes are valid.</p>
-                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Syllable Declarations</h2>
+                <p className="mb-4">A <code>Syllables:</code> block tells the engine what syllable shapes are valid. If not specified, syllabification follows three principles:</p>
+                
+                <h3 className="text-lg font-semibold mt-6 mb-3">Default Syllabification Principles</h3>
+                <table className="w-full text-sm border-collapse mb-4">
+                  <thead>
+                    <tr className="bg-[#eae6de] dark:bg-[#2a2920] text-[10px] uppercase font-bold text-rt-muted">
+                      <th className="p-2 text-left border border-rt-border">Principle</th>
+                      <th className="p-2 text-left border border-rt-border">Description</th>
+                      <th className="p-2 text-left border border-rt-border">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 font-bold border border-rt-border">Sonority Sequencing</td>
+                      <td className="p-2 border border-rt-border">Syllable peaks are the most sonorous segments</td>
+                      <td className="p-2 font-mono border border-rt-border">astre → as.tre (not a.stre)</td>
+                    </tr>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 font-bold border border-rt-border">Smallest Onset</td>
+                      <td className="p-2 border border-rt-border">Assign minimum possible to syllable onset</td>
+                      <td className="p-2 font-mono border border-rt-border">at.las (not atl.as)</td>
+                    </tr>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 font-bold border border-rt-border">Smallest Coda</td>
+                      <td className="p-2 border border-rt-border">Prefer onsets over codas when ambiguous</td>
+                      <td className="p-2 font-mono border border-rt-border">a.tom (not at.om)</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Sonority Scale</h3>
+                <p className="mb-4">The default syllabification uses this sonority hierarchy (high to low):</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm mb-4">
+                  Vowels (high) &gt; Glides &gt; Liquids &gt; Nasals &gt; Fricatives &gt; Stops (low)
+                </div>
+                <p className="text-sm">Syllable breaks occur where sonority decreases, not increases. Between vowels, consonants form onsets rather than codas when possible (maximal onset principle).</p>
+
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1 mt-4">
                   <p><span className="text-rt-accent font-bold">Syllables</span>:</p>
                   <p className="pl-4">@onset? :: @nucleus :: @coda?</p>
+                  <p className="text-[#6b6860] italic mt-2">// :: separates onset, nucleus, coda sections</p>
                 </div>
               </section>
 
@@ -387,10 +539,10 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
 
               <section id="comments">
                 <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Comments</h2>
-                <p className="mb-4">Both <code>//</code> and <code>#</code> introduce line comments.</p>
+                <p className="mb-4">Both <code>//</code> and <code>;</code> introduce line comments. <code>#</code> is reserved for word boundaries.</p>
                 <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
                   <p className="text-[#6b6860] italic">// This is a comment</p>
-                  <p className="text-[#6b6860] italic"># This is also a comment</p>
+                  <p className="text-[#6b6860] italic">; This is also a comment</p>
                 </div>
               </section>
 
@@ -420,6 +572,129 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                 </div>
               </section>
 
+              <section id="capturevars">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Capture Variables & Backreferences</h2>
+                <p className="mb-4">Use angle brackets <code>&lt;...&gt;</code> to capture parts of the match, then reference them with <code>$1</code>, <code>$2</code>, etc. in the replacement.</p>
+                <div className="overflow-hidden border border-rt-border rounded-xl text-xs">
+                  <div className="grid grid-cols-3 bg-[#eae6de] dark:bg-[#2a2920] font-bold p-2 uppercase tracking-wider text-[10px]">
+                    <div>Input</div><div>Rule</div><div>Output</div>
+                  </div>
+                  <div className="grid grid-cols-3 p-2 border-t border-rt-border font-mono">
+                    <div>atkaŋni</div><div className="text-[#0e6f6a] dark:text-[#4ecac4]">&lt;C&gt;&lt;C&gt; &gt; $2ː</div><div>akːanːi</div>
+                  </div>
+                  <div className="grid grid-cols-3 p-2 border-t border-rt-border font-mono bg-black/5">
+                    <div>helsinki</div><div className="text-[#0e6f6a] dark:text-[#4ecac4]">n &gt; [@place] / _&lt;[@place]&gt;</div><div>helsiŋki</div>
+                  </div>
+                </div>
+              </section>
+
+              <section id="classops">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Class Operations</h2>
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="bg-[#eae6de] dark:bg-[#2a2920] text-[10px] uppercase font-bold text-rt-muted">
+                      <th className="p-2 text-left border border-rt-border">Syntax</th>
+                      <th className="p-2 text-left border border-rt-border">Meaning</th>
+                      <th className="p-2 text-left border border-rt-border">Example</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { s: 'C-k', m: 'Class minus phoneme', ex: 'All consonants except k' },
+                      { s: 'C-{k,p}', m: 'Class minus set', ex: 'All consonants except k and p' },
+                      { s: 'C-[+voice]', m: 'Class minus feature', ex: 'Voiceless consonants' },
+                      { s: 'C&V', m: 'Intersection', ex: 'Sounds that are both C and V (none)' },
+                      { s: 'C&!V', m: 'Subtraction', ex: 'Consonants that are not vowels' },
+                      { s: '@stop&[+voice]', m: 'Class & feature', ex: 'Voiced stops' },
+                    ].map(row => (
+                      <tr key={row.s} className="border-t border-rt-border">
+                        <td className="p-2 font-mono text-[#8a2c1a] dark:text-[#e07060] border border-rt-border">{row.s}</td>
+                        <td className="p-2 border border-rt-border">{row.m}</td>
+                        <td className="p-2 border border-rt-border text-sm">{row.ex}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <section id="targetconds">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Target Conditions</h2>
+                <p className="mb-4">When an environment has no underscore, it checks features of the target itself rather than surrounding context.</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2">
+                  <p className="text-[#6b6860] italic">// Nasalize only stressed vowels</p>
+                  <p><span className="text-[#0e6f6a] dark:text-[#4ecac4]">V</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#4a2d8a] dark:text-[#a080e0]">[+nasal]</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">/</span> <span className="text-[#4a2d8a] dark:text-[#a080e0]">[+stress]</span></p>
+                  <p className="text-[#6b6860] italic mt-2">// Lower non-high tone vowels</p>
+                  <p><span className="text-[#0e6f6a] dark:text-[#4ecac4]">V</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#4a2d8a] dark:text-[#a080e0]">[+low-tone]</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">/</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">!</span><span className="text-[#4a2d8a] dark:text-[#a080e0]">[+high-tone]</span></p>
+                </div>
+              </section>
+
+              <section id="multienv">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Multiple Environments</h2>
+                <p className="mb-4">Use commas or pipes to specify multiple environments where a rule applies.</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2">
+                  <p className="text-[#6b6860] italic">// n becomes m before p OR b</p>
+                  <p><span className="text-[#0e6f6a] dark:text-[#4ecac4]">n</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">m</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">/</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">_p, _b</span></p>
+                  <p className="text-[#6b6860] italic mt-2">// a becomes o word-initially or word-finally</p>
+                  <p><span className="text-[#0e6f6a] dark:text-[#4ecac4]">a</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">o</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">/</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">#_ | _#</span></p>
+                </div>
+              </section>
+
+              <section id="block">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Iterative Blocks</h2>
+                <p className="mb-4">Wrap rules in <code>[block]</code>...<code>[end]</code> to apply them repeatedly until no more changes occur. Useful for harmony processes.</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
+                  <p><span className="text-rt-accent font-bold">[block]</span></p>
+                  <p className="pl-4">a &gt; e / _(C+)e</p>
+                  <p><span className="text-rt-accent font-bold">[end]</span></p>
+                  <p className="text-[#6b6860] italic mt-2">; tanake → teneke (harmony spreads leftward)</p>
+                </div>
+              </section>
+
+              <section id="except">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Exception Lists</h2>
+                <p className="mb-4">Add <code>except</code> followed by words to skip specific inputs from a rule.</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2">
+                  <p className="text-[#6b6860] italic">// Change a to e except in mama</p>
+                  <p><span className="text-[#0e6f6a] dark:text-[#4ecac4]">a</span> <span className="text-[#8a2c1a] dark:text-[#e07060] font-bold">&gt;</span> <span className="text-[#0e6f6a] dark:text-[#4ecac4]">e</span> <span className="text-[#6b6860] italic">except mama papa</span></p>
+                </div>
+              </section>
+
+              <section id="literal">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Romanizer/Deromanizer Literal Mode</h2>
+                <p className="mb-4">Add <code>literal</code> to ignore declarations and treat symbols literally. Useful when your romanization conflicts with IPA diacritics.</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
+                  <p className="text-[#6b6860] italic">// ʼ is both ejective diacritic AND glottal stop in romanization</p>
+                  <p><span className="text-rt-accent font-bold">Deromanizer</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">literal</span>:</p>
+                  <p className="pl-4">ʼ &gt; ʔ</p>
+                  <p><span className="text-rt-accent font-bold">Then</span>:</p>
+                  <p className="pl-4">{`{p, t, k} > [+ejective]`}</p>
+                </div>
+              </section>
+
+              <section id="cleanupoff">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Cleanup On/Off</h2>
+                <p className="mb-4">Deactivate cleanup rules after a certain point using <code>off</code>.</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
+                  <p><span className="text-rt-accent font-bold">Cleanup</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">nasal-assim</span>:</p>
+                  <p className="pl-4">[C +nasal] &gt; [@place] / _[@place]</p>
+                  <p className="text-[#6b6860] italic">; ... later rules ...</p>
+                  <p><span className="text-rt-accent font-bold">Cleanup</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">nasal-assim</span>:</p>
+                  <p className="pl-4">off</p>
+                </div>
+              </section>
+
+              <section id="customseg">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Custom Segment Definitions</h2>
+                <p className="mb-4">Define custom phonemes with <code>feat:</code> for symbols not in the built-in IPA database.</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2">
+                  <p><span className="text-rt-accent font-bold">feat:</span> ꝗ = +cons +dor -voi</p>
+                  <p><span className="text-rt-accent font-bold">feat:</span> š = ʃ</p>
+                  <p><span className="text-rt-accent font-bold">feat:</span> č = tʃ</p>
+                  <p className="text-[#6b6860] italic">// Digraphs are detected automatically from components</p>
+                  <p><span className="text-rt-accent font-bold">feat:</span> kp gb ŋm</p>
+                </div>
+              </section>
+
               <section id="summary">
                 <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Quick reference</h2>
                 <div className="overflow-x-auto">
@@ -436,7 +711,7 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                         { op: '> or =>', m: 'Change (arrow)', ex: 'a > o' },
                         { op: '/', m: 'Environment separator', ex: 'a > o / _b' },
                         { op: '_', m: 'Position of matched segment', ex: '/ C_V' },
-                        { op: '#', m: 'Word boundary', ex: '/ _#' },
+                        { op: '#', m: 'Word boundary', ex: '/ #_' },
                         { op: '∅', m: 'Null / empty', ex: 'C > ∅' },
                         { op: '{ }', m: 'Set or parallel replacement', ex: '{p,t,k} > {b,d,g}' },
                         { op: '|', m: 'Random alternation', ex: 'b > m | n' },
@@ -449,6 +724,16 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                         { op: '@feature', m: 'Feature variable', ex: '[@place]' },
                         { op: 'Then:', m: 'Sub-rule sequencing', ex: 'Then: ʃ > s' },
                         { op: 'propagate', m: 'Repeat until stable', ex: 'harmony propagate:' },
+                        { op: '<X>', m: 'Capture group', ex: '<C><C> > $2ː' },
+                        { op: '$1', m: 'Backreference', ex: '<V>n > $1ː' },
+                        { op: 'C-k', m: 'Class exclusion', ex: 'C-k (C minus k)' },
+                        { op: 'A&B', m: 'Intersection', ex: '@stop&[+voice]' },
+                        { op: 'A&!B', m: 'Subtraction', ex: 'C&!V' },
+                        { op: ', or |', m: 'Multiple envs', ex: '/ _p, _b' },
+                        { op: '[block]', m: 'Iterative block', ex: '[block] ... [end]' },
+                        { op: 'literal', m: 'Ignore declarations', ex: 'Deromanizer literal:' },
+                        { op: 'except', m: 'Word exceptions', ex: 'a > e except mama' },
+                        { op: 'off', m: 'Deactivate cleanup', ex: 'Cleanup: off' },
                       ].map(row => (
                         <tr key={row.op} className="border-t border-rt-border">
                           <td className="p-2 font-mono text-[#8a2c1a] dark:text-[#e07060] border border-rt-border">{row.op}</td>

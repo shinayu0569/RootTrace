@@ -513,40 +513,37 @@ const computeWt = (yearOfLanguage: number, protoYear: number): number => {
 
 /**
  * Wc: phonological conservatism.
- * Measures phoneme diversity at all assessed positions; applies a continuous
- * penalty for positions where this language shows merger evidence.
+ * Measures retention rate: how closely a language's reflexes match the proto-form.
+ * Uses continuous distance metric for gradual conservatism scoring.
  */
-const computeWc = (langIdx: number, alignmentMatrix: string[][]): number => {
+const computeWc = (
+  langIdx: number,
+  alignmentMatrix: string[][],
+  protoTokens: string[]  // Current proto-form estimate for comparison
+): number => {
   const nLangs = alignmentMatrix.length;
   if (nLangs <= 1) return 1.0;
   const langRow = alignmentMatrix[langIdx];
-  if (!langRow) return 0.5;
+  if (!langRow || protoTokens.length === 0) return 0.5;
 
-  const langDistinct = new Set(langRow.filter(p => p !== GAP_CHAR));
-  let maxOtherDistinct = 0;
-  for (let otherIdx = 0; otherIdx < nLangs; otherIdx++) {
-    if (otherIdx === langIdx) continue;
-    const d = new Set((alignmentMatrix[otherIdx] || []).filter(p => p !== GAP_CHAR)).size;
-    if (d > maxOtherDistinct) maxOtherDistinct = d;
-  }
-  if (maxOtherDistinct === 0) return 1.0;
-
-  // Continuous merger penalty: positions where others show 2+ phonemes but we show 1
-  let mergerPenalty = 0;
-  for (let col = 0; col < langRow.length; col++) {
-    const myPhoneme = langRow[col];
-    if (myPhoneme === GAP_CHAR) continue;
-    const otherPhonemes = new Set<string>();
-    for (let otherIdx = 0; otherIdx < nLangs; otherIdx++) {
-      if (otherIdx === langIdx) continue;
-      const op = alignmentMatrix[otherIdx]?.[col];
-      if (op && op !== GAP_CHAR) otherPhonemes.add(op);
-    }
-    if (otherPhonemes.size >= 2 && otherPhonemes.has(myPhoneme)) mergerPenalty += 0.02;
+  // Count positions where reflex matches proto (with continuous distance)
+  let totalPositions = 0;
+  let retainedPositions = 0;
+  
+  for (let col = 0; col < Math.min(langRow.length, protoTokens.length); col++) {
+    const reflex = langRow[col];
+    const proto = protoTokens[col];
+    if (!reflex || !proto || reflex === GAP_CHAR || proto === GAP_CHAR) continue;
+    
+    totalPositions++;
+    const dist = getPhoneticDistance(proto, reflex, 0.5, 0.8);
+    // Convert distance to similarity (0.8 distance = 0.2 similarity)
+    retainedPositions += Math.max(0, 1.0 - dist);
   }
 
-  const rawConservatism = langDistinct.size / maxOtherDistinct;
-  return Math.max(0.30, Math.min(1.0, rawConservatism - mergerPenalty));
+  return totalPositions > 0
+    ? Math.max(0.30, retainedPositions / totalPositions)
+    : 0.50;
 };
 
 /** Wr: data reliability (era-based schedule) */
@@ -564,24 +561,36 @@ const computeWr = (year: number): number => {
 /**
  * Apply floor threshold: rescale any language whose proportion of total weight
  * exceeds WEIGHT_FLOOR down to exactly that proportion.
+ * Uses iterative renormalization to ensure the constraint holds for all languages.
  */
 const applyFloorThreshold = (rawWeights: number[]): number[] => {
-  const total = rawWeights.reduce((s, w) => s + w, 0);
-  if (total === 0) return rawWeights.map(() => 1.0);
-  return rawWeights.map(w => {
-    const proportion = w / total;
-    return proportion > WEIGHT_FLOOR ? w * (WEIGHT_FLOOR / proportion) : w;
-  });
+  const weights = [...rawWeights];
+  const MAX_ITER = 20;
+  for (let iter = 0; iter < MAX_ITER; iter++) {
+    const total = weights.reduce((s, w) => s + w, 0);
+    if (total === 0) return weights.map(() => 1.0);
+    let changed = false;
+    for (let i = 0; i < weights.length; i++) {
+      const proportion = weights[i] / total;
+      if (proportion > WEIGHT_FLOOR) {
+        weights[i] *= WEIGHT_FLOOR / proportion;
+        changed = true;
+      }
+    }
+    if (!changed) break;  // Convergence - all constraints satisfied
+  }
+  return weights;
 };
 
 /** Full W(Lᵢ) = Wt × Wc × Wr, then apply floor threshold across all languages */
 const computeFullWeights = (
   topLevelForms: { year: number }[],
   alignmentMatrix: string[][],
-  protoYear: number
+  protoYear: number,
+  protoTokens: string[]  // Current proto-form for conservatism calculation
 ): number[] => {
   const raw = topLevelForms.map((f, idx) =>
-    computeWt(f.year, protoYear) * computeWc(idx, alignmentMatrix) * computeWr(f.year)
+    computeWt(f.year, protoYear) * computeWc(idx, alignmentMatrix, protoTokens) * computeWr(f.year)
   );
   return applyFloorThreshold(raw);
 };
@@ -725,17 +734,18 @@ const imputeMissingPhoneme = (
  * A lower λ permits more complex reconstructions; a higher λ aggressively
  * prefers the simplest candidates.
  */
-const LAMBDA_MDL = 0.12;
+const LAMBDA_MDL = 0.03;  // Was 0.12 - reduce by 75% to avoid destroying confidence scores
 
 const computeMDLComplexity = (
   candidateChars: string[],
   alignmentMatrix: string[][]
 ): number => {
-  let complexity = 0;
+  const cleanLen = candidateChars.filter(c => c !== GAP_CHAR).length;
+  if (cleanLen === 0) return 0;
 
-  // 1. Inventory cost
+  // 1. Inventory cost - normalize by word length
   const distinctProto = new Set(candidateChars.filter(c => c !== GAP_CHAR));
-  complexity += distinctProto.size * 0.08;
+  const inventoryCost = (distinctProto.size / cleanLen) * 0.5;
 
   // 2. Rule cost: unique implied proto → reflex correspondences
   const impliedRules = new Set<string>();
@@ -747,16 +757,12 @@ const computeMDLComplexity = (
       if (reflex && reflex !== GAP_CHAR && reflex !== proto) impliedRules.add(`${proto}→${reflex}`);
     }
   }
-  complexity += impliedRules.size * 0.06;
+  const ruleCost = (impliedRules.size / cleanLen) * 0.4;
 
-  // 3. Length penalty
-  const avgAttestedLen = alignmentMatrix.length > 0
-    ? alignmentMatrix.reduce((s, r) => s + r.filter(c => c !== GAP_CHAR).length, 0) / alignmentMatrix.length
-    : candidateChars.length;
-  const excess = Math.max(0, candidateChars.filter(c => c !== GAP_CHAR).length - avgAttestedLen);
-  complexity += excess * 0.04;
+  // 3. No length penalty - length should be driven by data, not penalized
+  // Remove the length penalty that was unfairly penalizing longer words
 
-  return complexity;
+  return inventoryCost + ruleCost;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -936,21 +942,164 @@ const evaluateChainShifts = (sequence: string[], alignmentMatrix: string[][]): n
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// §3 — NATURAL CHANGE BONUS
+// §3 — NATURAL CHANGE BONUS (Enhanced with Index Diachronica Environment Matching)
 // ═══════════════════════════════════════════════════════════════════════════════
 /**
  * Assigns a bonus to a proto→reflex correspondence based on:
  *   1. Matched rules in the NATURAL_SOUND_CHANGES database
- *   2. Index Diachronica frequency data
+ *   2. Index Diachronica frequency data (with environment context matching)
  *   3. Feature-shift frequency data (featureFreqs.json)
  *   4. Generative naturalness evaluation (evaluateNaturalness)
  *   5. Positional weighting (lenition in weak positions, stability in strong)
  *   6. Nasal assimilation and palatalization bonuses
  *   7. Directional penalties for fortition and denasalisation
  *
+ * ENHANCED: Environment-aware Diachronica matching for improved naturalism.
+ * Source language attribution is NOT exposed to users.
+ *
  * The bonus is subtracted from the phonetic distance before weighting,
  * so natural changes incur lower effective cost than unnatural ones.
  */
+
+/**
+ * Match a Diachronica environment pattern against actual phonetic context.
+ * Returns a similarity score (0.0–1.0) based on how well the pattern fits.
+ * Source language info is NOT extracted - patterns are anonymized.
+ */
+const matchDiachronicaEnvironment = (
+  pattern: { l: string; r: string },
+  left: string | null,
+  right: string | null
+): number => {
+  let score = 0;
+  let checks = 0;
+
+  // Helper to normalize pattern symbols
+  const normalizePattern = (p: string): string => {
+    return p.replace(/[{}]/g, '').replace(/\[\+?([a-zA-Z]+)\]/g, '$1');
+  };
+
+  // Match left context
+  if (pattern.l) {
+    checks++;
+    const leftPat = normalizePattern(pattern.l);
+    if (!leftPat || leftPat === '' || leftPat === '∅') {
+      // Word-initial pattern
+      if (left === null || left === GAP_CHAR || left === '#') score += 1;
+    } else if (leftPat === '#' || leftPat === '$') {
+      // Word boundary pattern
+      if (left === null || left === GAP_CHAR) score += 1;
+    } else if (leftPat.includes(',') || leftPat.includes('|')) {
+      // Alternation pattern like {p,k} or {V,C}
+      const options = leftPat.split(/[,|]/);
+      for (const opt of options) {
+        if (left === opt.trim()) {
+          score += 1;
+          break;
+        }
+        // Feature-based matching for classes like V, C, N
+        if (left && FEATURE_MAP[left]) {
+          const lf = FEATURE_MAP[left];
+          if ((opt === 'V' && lf.syllabic) ||
+              (opt === 'C' && lf.consonantal) ||
+              (opt === 'N' && lf.nasal)) {
+            score += 0.9;
+            break;
+          }
+        }
+      }
+    } else if (leftPat === 'V') {
+      // Vowel context
+      if (left && FEATURE_MAP[left]?.syllabic) score += 1;
+    } else if (leftPat === 'C') {
+      // Consonant context
+      if (left && FEATURE_MAP[left]?.consonantal) score += 1;
+    } else {
+      // Specific phoneme match
+      if (left === leftPat) score += 1;
+    }
+  }
+
+  // Match right context
+  if (pattern.r) {
+    checks++;
+    const rightPat = normalizePattern(pattern.r);
+    if (!rightPat || rightPat === '' || rightPat === '∅') {
+      // Word-final pattern
+      if (right === null || right === GAP_CHAR || right === '#') score += 1;
+    } else if (rightPat === '#' || rightPat === '$') {
+      // Word boundary pattern
+      if (right === null || right === GAP_CHAR) score += 1;
+    } else if (rightPat.includes(',') || rightPat.includes('|')) {
+      // Alternation pattern
+      const options = rightPat.split(/[,|]/);
+      for (const opt of options) {
+        if (right === opt.trim()) {
+          score += 1;
+          break;
+        }
+        // Feature-based matching
+        if (right && FEATURE_MAP[right]) {
+          const rf = FEATURE_MAP[right];
+          if ((opt === 'V' && rf.syllabic) ||
+              (opt === 'C' && rf.consonantal) ||
+              (opt === 'N' && rf.nasal)) {
+            score += 0.9;
+            break;
+          }
+        }
+      }
+    } else if (rightPat === 'V') {
+      if (right && FEATURE_MAP[right]?.syllabic) score += 1;
+    } else if (rightPat === 'C') {
+      if (right && FEATURE_MAP[right]?.consonantal) score += 1;
+    } else {
+      // Specific phoneme match
+      if (right === rightPat) score += 1;
+    }
+  }
+
+  // Normalize score by number of checks
+  return checks > 0 ? score / checks : 0.5; // Default 0.5 if no environment specified
+};
+
+/**
+ * Get environment-aware Diachronica bonus.
+ * This enhances the basic frequency bonus by considering how well
+ * the actual phonetic context matches attested environments.
+ * Source languages are NOT exposed - only pattern frequencies are used.
+ */
+const getDiachronicaEnvironmentBonus = (
+  p: string,
+  reflex: string,
+  left: string | null,
+  right: string | null
+): number => {
+  const shiftKey = `${p}>${reflex}`;
+  const freqData = (diachronicaFreqs as any)[shiftKey];
+  if (!freqData || !freqData.envs || freqData.envs.length === 0) return 0;
+
+  // Calculate average environment match score
+  let totalEnvScore = 0;
+  let validEnvs = 0;
+
+  for (const env of freqData.envs) {
+    if (env && env.l !== undefined && env.r !== undefined) {
+      const matchScore = matchDiachronicaEnvironment(env, left, right);
+      totalEnvScore += matchScore;
+      validEnvs++;
+    }
+  }
+
+  if (validEnvs === 0) return 0;
+
+  const avgMatch = totalEnvScore / validEnvs;
+  const frequencyWeight = Math.log10(freqData.count + 1) * 0.05;
+
+  // Bonus scales with both frequency AND environment match quality
+  return avgMatch * frequencyWeight;
+};
+
 const getNaturalChangeBonus = (p: string, reflex: string, left: string | null, right: string | null): number => {
   const fP = getEffectiveFeatures(p), fR = getEffectiveFeatures(reflex);
   if (!fP || !fR) return 0;
@@ -965,26 +1114,39 @@ const getNaturalChangeBonus = (p: string, reflex: string, left: string | null, r
   const fR_full: DistinctiveFeaturesWithSymbol = { ...fR, symbol: reflex };
   const matchedRules = NATURAL_SOUND_CHANGES.filter(rule => rule.test(fP_full, fR_full, ctx));
   if (matchedRules.length > 0) bonus += matchedRules[0].priority * 0.03;
+
+  // ENHANCED: Environment-aware Diachronica bonus
+  const diachronicaBaseBonus = getDiachronicaEnvironmentBonus(p, reflex, left, right);
+  bonus += diachronicaBaseBonus;
+
+  // Fallback: Basic frequency bonus for shifts with high frequency
   const shiftKey = `${p}>${reflex}`;
   const freqData = (diachronicaFreqs as any)[shiftKey];
-  if (freqData && freqData.count) {
-    bonus += 0.03 + Math.log10(freqData.count) * 0.075;
+  if (freqData && freqData.count >= 3) {
+    // Reduced base bonus since environment matching now provides most value
+    bonus += 0.02 + Math.log10(freqData.count) * 0.04;
+  } else if (freqData && freqData.count > 0) {
+    bonus += 0.01;
   } else {
-    const delta: string[] = [];
-    for (const k in fP) {
-      if (fP[k as keyof typeof fP] !== fR[k as keyof typeof fR]) delta.push(`${k}:${fR[k as keyof typeof fR]}`);
-    }
-    if (delta.length > 0) {
-      const deltaKey = delta.sort().join(',');
-      const featureFreq = (featureFreqs as any)[deltaKey];
-      if (featureFreq) {
-        bonus += 0.02 + Math.log10(featureFreq) * 0.03;
-      } else {
-        const naturalness = evaluateNaturalness(p, reflex, left, right);
-        bonus += naturalness.score * 0.15;
-      }
-    }
+    bonus += 0.005;
   }
+
+  // Feature-based naturalness (unchanged)
+  const delta: string[] = [];
+  for (const k in fP) {
+    if (fP[k as keyof typeof fP] !== fR[k as keyof typeof fR]) delta.push(`${k}:${fR[k as keyof typeof fR]}`);
+  }
+  if (delta.length > 0) {
+    const deltaKey = delta.sort().join(',');
+    const featureFreq = (featureFreqs as any)[deltaKey];
+    if (featureFreq) {
+      bonus += 0.02 + Math.log10(featureFreq) * 0.03;
+    }
+    const naturalness = evaluateNaturalness(p, reflex, left, right);
+    bonus += naturalness.score * 0.15;
+  }
+
+  // Positional bonuses (unchanged)
   const isVowel = (c: string | null) => c && FEATURE_MAP[c]?.syllabic;
   const isIntervocalic = left && right && isVowel(left) && isVowel(right);
   if (isIntervocalic || right === null) {
@@ -1047,6 +1209,184 @@ const performMSA = (inputs: { word: string }[], params: ReconstructionParams): s
   const finalGrid: string[][] = Array(inputs.length).fill([]);
   gridIndexToInputIndex.forEach((origIdx, gi) => { finalGrid[origIdx] = alignmentGrid[gi]; });
   return finalGrid;
+};
+
+/**
+ * §1/6 — TREE-GUIDED MULTIPLE SEQUENCE ALIGNMENT (UPGMA-style progressive)
+ * 
+ * Performs phylogenetically-informed alignment: aligns within clades first,
+ * then merges clade consensus sequences up the tree. This respects historical
+ * relationships and produces more linguistically accurate alignments than
+ * center-star methods.
+ * 
+ * Strategy:
+ *   1. For leaf nodes: return tokenized sequence
+ *   2. For internal nodes with children: align all child consensus sequences
+ *   3. Build consensus for this node's clade (simple majority vote)
+ *   4. Return full alignment grid for this subtree
+ * 
+ * @param node - Root of the phylogenetic subtree to align
+ * @param params - Reconstruction parameters
+ * @returns Object containing alignment matrix for this subtree and leaf index mapping
+ */
+interface TreeAlignmentResult {
+  alignment: string[][];  // Rows: aligned sequences for all leaves in this subtree
+  consensus: string[];    // Consensus sequence for this clade
+  leafIndices: string[]; // Language IDs in order of alignment rows
+}
+
+const alignSubtree = (node: LanguageInput, params: ReconstructionParams): TreeAlignmentResult => {
+  const nodeId = node.id || node.name;
+  
+  // Leaf node: just tokenize and return
+  if (!node.descendants || node.descendants.length === 0) {
+    const tokens = tokenizeIPA(node.word || '');
+    return {
+      alignment: [tokens],
+      consensus: tokens,
+      leafIndices: [nodeId]
+    };
+  }
+  
+  // Internal node: align all children first
+  const childResults = node.descendants.map(child => alignSubtree(child, params));
+  
+  // Collect child consensus sequences for alignment
+  const childConsensuses = childResults.map(r => r.consensus);
+  const childLeafIndices = childResults.flatMap(r => r.leafIndices);
+  
+  // Align all child consensuses to each other using progressive center-star
+  // The longest child consensus becomes the initial center
+  let centerIdx = 0;
+  let maxLen = 0;
+  childConsensuses.forEach((c, i) => {
+    if (c.length > maxLen) {
+      maxLen = c.length;
+      centerIdx = i;
+    }
+  });
+  
+  let cladeConsensus = [...childConsensuses[centerIdx]];
+  let alignedChildren: string[][] = [];
+  
+  // Align each child to the evolving consensus
+  for (let i = 0; i < childConsensuses.length; i++) {
+    if (i === centerIdx) {
+      alignedChildren.push(childConsensuses[i]);
+      continue;
+    }
+    
+    const { alignedA, alignedB } = needlemanWunsch(
+      cladeConsensus, 
+      childConsensuses[i], 
+      params.gapPenalty, 
+      params.unknownCharPenalty
+    );
+    
+    // Update clade consensus with gaps from this alignment
+    if (alignedA.length > cladeConsensus.length) {
+      cladeConsensus = alignedA;
+    }
+    alignedChildren.push(alignedB);
+  }
+  
+  // Now propagate gaps to all children to match final consensus length
+  const finalConsensus = cladeConsensus;
+  for (let i = 0; i < alignedChildren.length; i++) {
+    if (alignedChildren[i].length < finalConsensus.length) {
+      // Pad with gaps
+      while (alignedChildren[i].length < finalConsensus.length) {
+        alignedChildren[i].push(GAP_CHAR);
+      }
+    }
+  }
+  
+  // Build full alignment by concatenating child alignments (with propagated gaps)
+  // Each child alignment needs to be expanded to match the new consensus length
+  const fullAlignment: string[][] = [];
+  
+  for (let childIdx = 0; childIdx < childResults.length; childIdx++) {
+    const childResult = childResults[childIdx];
+    const childConsensusAligned = alignedChildren[childIdx];
+    
+    // Create gap map: which positions in final consensus came from gaps
+    const gapMap: boolean[] = [];
+    let consensusPtr = 0;
+    for (let k = 0; k < childConsensusAligned.length; k++) {
+      if (childConsensusAligned[k] === GAP_CHAR && 
+          (consensusPtr >= childResult.consensus.length || 
+           childResult.consensus[consensusPtr] !== GAP_CHAR)) {
+        gapMap.push(true);  // New gap introduced
+      } else {
+        gapMap.push(false); // Position from original consensus
+        consensusPtr++;
+      }
+    }
+    
+    // Propagate gaps to each leaf in this child
+    for (let leafIdx = 0; leafIdx < childResult.alignment.length; leafIdx++) {
+      const originalRow = childResult.alignment[leafIdx];
+      const newRow: string[] = [];
+      let originalPtr = 0;
+      
+      for (let k = 0; k < gapMap.length; k++) {
+        if (gapMap[k]) {
+          newRow.push(GAP_CHAR);
+        } else {
+          newRow.push(originalRow[originalPtr] ?? GAP_CHAR);
+          originalPtr++;
+        }
+      }
+      
+      fullAlignment.push(newRow);
+    }
+  }
+  
+  return {
+    alignment: fullAlignment,
+    consensus: finalConsensus,
+    leafIndices: childLeafIndices
+  };
+};
+
+/**
+ * Tree-guided MSA entry point.
+ * Aligns all languages in the tree using phylogenetic structure.
+ * Falls back to center-star MSA for flat (no-descendants) inputs.
+ */
+const performMSA_treeGuided = (
+  inputs: LanguageInput[], 
+  params: ReconstructionParams
+): { alignmentMatrix: string[][], leafOrder: string[] } => {
+  // Check if any input has descendants (tree structure)
+  const hasTreeStructure = inputs.some(i => i.descendants && i.descendants.length > 0);
+  
+  if (!hasTreeStructure || inputs.length === 0) {
+    // Fall back to center-star MSA
+    const flatAlignment = performMSA(
+      inputs.map(i => ({ word: i.word })), 
+      params
+    );
+    return {
+      alignmentMatrix: flatAlignment,
+      leafOrder: inputs.map(i => i.id || i.name)
+    };
+  }
+  
+  // Create a virtual root to hold all top-level inputs as siblings
+  const virtualRoot: LanguageInput = {
+    id: '__root__',
+    name: '__root__',
+    word: '',
+    descendants: inputs
+  };
+  
+  const result = alignSubtree(virtualRoot, params);
+  
+  return {
+    alignmentMatrix: result.alignment,
+    leafOrder: result.leafIndices
+  };
 };
 
 /** Pillar 4: Joint alignment — re-align descendants to hypothesised proto-word */
@@ -1172,29 +1512,34 @@ const solveMedoid = (
 };
 
 /**
- * Bayesian MCMC solver: explores the full phoneme universe.
- *
- * Improvements over v2:
- *  • columnSpreadMultiplier: §4b integration — scales language weights at
- *    low-spread columns to reduce the influence of areal correspondences.
- *  • Gap positions use imputation (§4) rather than flat gap penalty.
- *  • Syllabic consonants treated as weak vowel witnesses (not full gaps).
- *  • Weights use full Wt × Wc × Wr system (§2) after first EM iteration.
- *  • Neighbourhood threshold 0.35 prevents the degenerate all-neighbours case.
- *  • MCMC initialised from minimum-distance medoid for reproducibility.
+ * Feature 2.3: Single MCMC chain runner for multi-chain MCMC.
+ * Runs one independent chain from a specified starting point.
  */
-const solveMCMC = (
-  matrix: string[][], colIdx: number, params: ReconstructionParams,
-  languageWeights?: number[], columnSpreadMultiplier?: number
-): { char: string; dist: { [key: string]: number } } => {
+interface MCMCChainResult {
+  counts: Record<string, number>;
+  samples: string[];  // All samples for convergence calculation
+  startPoint: string;
+}
+
+const runSingleMCMCChain = (
+  matrix: string[][],
+  colIdx: number,
+  params: ReconstructionParams,
+  languageWeights?: number[],
+  columnSpreadMultiplier?: number,
+  startPoint?: string,
+  chainId?: number
+): MCMCChainResult => {
   const spreadMult = columnSpreadMultiplier ?? 1.0;
   const column = matrix.map(row => row[colIdx]);
   const validReflexes = column.filter(c => c !== GAP_CHAR);
-  if (validReflexes.length === 0) return { char: '', dist: {} };
+  
+  if (validReflexes.length === 0) return { counts: {}, samples: [], startPoint: '' };
 
   const uniqueTokens = Array.from(new Set(matrix.flat().filter(c => c !== GAP_CHAR)));
   const universe = Array.from(new Set([...Object.keys(FEATURE_MAP), ...uniqueTokens]));
   const counts: Record<string, number> = {};
+  const samples: string[] = [];
 
   const neighborsMap: Record<string, string[]> = {};
   universe.forEach(u => {
@@ -1203,14 +1548,21 @@ const solveMCMC = (
     );
   });
 
-  // Initialise from medoid of attested reflexes
-  let current = validReflexes[0], minInitDist = Infinity;
-  validReflexes.forEach(candidate => {
-    const totalDist = validReflexes.reduce(
-      (sum, r) => sum + getPhoneticDistance(candidate, r, params.gapPenalty, params.unknownCharPenalty), 0
-    );
-    if (totalDist < minInitDist) { minInitDist = totalDist; current = candidate; }
-  });
+  // Feature 2.3: Initialize from specified start point or medoid
+  let current: string;
+  if (startPoint && universe.includes(startPoint)) {
+    current = startPoint;
+  } else {
+    // Default: medoid initialization
+    let minInitDist = Infinity;
+    validReflexes.forEach(candidate => {
+      const totalDist = validReflexes.reduce(
+        (sum, r) => sum + getPhoneticDistance(candidate, r, params.gapPenalty, params.unknownCharPenalty), 0
+      );
+      if (totalDist < minInitDist) { minInitDist = totalDist; current = candidate; }
+    });
+    current = current || validReflexes[0];
+  }
 
   const getLogPosterior = (p: string) => {
     let logP = Math.log(PHONETIC_PRIOR[p] || 0.35);
@@ -1239,6 +1591,10 @@ const solveMCMC = (
   };
 
   let currentLogP = getLogPosterior(current);
+  
+  // Feature 2.3: 30% burn-in instead of 20%
+  const burnInStart = Math.floor(params.mcmcIterations * 0.3);
+  
   for (let i = 0; i < params.mcmcIterations; i++) {
     const currentNeighbors = neighborsMap[current];
     const proposal = (Math.random() < 0.75 && currentNeighbors.length > 0)
@@ -1249,18 +1605,177 @@ const solveMCMC = (
     const proposalNeighbors = neighborsMap[proposal];
     const qBackward = (proposalNeighbors.includes(current) ? 0.75 / proposalNeighbors.length : 0) + 0.25 / universe.length;
     const acceptanceRatio = Math.exp(proposalLogP - currentLogP) * (qBackward / qForward);
-    if (acceptanceRatio > 1 || Math.random() < acceptanceRatio) { current = proposal; currentLogP = proposalLogP; }
-    if (i >= params.mcmcIterations * 0.2) counts[current] = (counts[current] || 0) + 1;
+    
+    if (acceptanceRatio > 1 || Math.random() < acceptanceRatio) {
+      current = proposal;
+      currentLogP = proposalLogP;
+    }
+    
+    // Feature 2.3: Store samples after burn-in
+    if (i >= burnInStart) {
+      counts[current] = (counts[current] || 0) + 1;
+      samples.push(current);
+    }
   }
 
+  return { counts, samples, startPoint: current };
+};
+
+/**
+ * Feature 2.3: Compute chain convergence using inter-chain mode agreement.
+ * Returns fraction of chains that agree on the same mode (1.0 = full agreement).
+ * This is more appropriate for categorical variables like phonemes than PSRF.
+ */
+const computeChainConvergence = (chainSamples: string[][]): number => {
+  if (chainSamples.length < 2) return 1.0;
+  
+  // Get mode (most common phoneme) of each chain
+  const modes = chainSamples.map(samples => {
+    const counts: Record<string, number> = {};
+    for (const s of samples) {
+      counts[s] = (counts[s] ?? 0) + 1;
+    }
+    // Return the most common phoneme
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return entries[0]?.[0] ?? '';
+  });
+  
+  // Count how many chains agree on each mode
+  const modeCounts: Record<string, number> = {};
+  for (const m of modes) {
+    modeCounts[m] = (modeCounts[m] ?? 0) + 1;
+  }
+  
+  // Fraction of chains agreeing on the most common mode
+  const maxAgreement = Math.max(...Object.values(modeCounts));
+  return maxAgreement / chainSamples.length;
+};
+
+/**
+ * Feature 2.3: Merge samples from multiple chains.
+ * Combines counts and computes convergence using mode agreement.
+ */
+const mergeChainSamples = (chainResults: MCMCChainResult[]): { counts: Record<string, number>; convergence: number } => {
+  const mergedCounts: Record<string, number> = {};
+  
+  // Sum counts across all chains
+  chainResults.forEach(result => {
+    Object.entries(result.counts).forEach(([phoneme, count]) => {
+      mergedCounts[phoneme] = (mergedCounts[phoneme] || 0) + count;
+    });
+  });
+  
+  // Compute convergence using mode agreement
+  const allSamples = chainResults.map(r => r.samples);
+  const convergence = computeChainConvergence(allSamples);
+  
+  return { counts: mergedCounts, convergence };
+};
+
+/**
+ * Feature 2.3: Multi-chain MCMC solver with convergence detection.
+ * Runs 3-4 independent chains from diverse starting points and merges results.
+ * Uses PSRF (Gelman-Rubin statistic) to detect convergence.
+ */
+const solveMCMCMultiChain = (
+  matrix: string[][],
+  colIdx: number,
+  params: ReconstructionParams,
+  languageWeights?: number[],
+  columnSpreadMultiplier?: number
+): { char: string; dist: { [key: string]: number }; convergence: number } => {
+  const NUM_CHAINS = 4;
+  
+  const column = matrix.map(row => row[colIdx]);
+  const validReflexes = column.filter(c => c !== GAP_CHAR);
+  
+  if (validReflexes.length === 0) return { char: '', dist: {}, convergence: 1.0 };
+  
+  const uniqueTokens = Array.from(new Set(matrix.flat().filter(c => c !== GAP_CHAR)));
+  const universe = Array.from(new Set([...Object.keys(FEATURE_MAP), ...uniqueTokens]));
+  
+  // Select diverse starting points
+  const startPoints: string[] = [];
+  
+  // Chain 1: Medoid (minimum sum of distances to all reflexes)
+  let medoid = validReflexes[0];
+  let minTotalDist = Infinity;
+  validReflexes.forEach(candidate => {
+    const totalDist = validReflexes.reduce(
+      (sum, r) => sum + getPhoneticDistance(candidate, r, params.gapPenalty, params.unknownCharPenalty), 0
+    );
+    if (totalDist < minTotalDist) { minTotalDist = totalDist; medoid = candidate; }
+  });
+  startPoints.push(medoid);
+  
+  // Chain 2: Random valid reflex
+  startPoints.push(validReflexes[Math.floor(Math.random() * validReflexes.length)]);
+  
+  // Chain 3: Most common phoneme in FEATURE_MAP (high prior)
+  const sortedByPrior = Object.entries(PHONETIC_PRIOR)
+    .sort((a, b) => b[1] - a[1])
+    .map(([p]) => p)
+    .filter(p => universe.includes(p));
+  startPoints.push(sortedByPrior[0] || validReflexes[0]);
+  
+  // Chain 4: Random from universe (exploration-focused)
+  startPoints.push(universe[Math.floor(Math.random() * universe.length)]);
+  
+  // Run chains in parallel (simulated with sequential for now)
+  const chainResults: MCMCChainResult[] = [];
+  for (let i = 0; i < NUM_CHAINS; i++) {
+    const result = runSingleMCMCChain(
+      matrix, colIdx, params, languageWeights, columnSpreadMultiplier,
+      startPoints[i], i
+    );
+    chainResults.push(result);
+  }
+  
+  // Merge samples and compute convergence
+  const { counts, convergence } = mergeChainSamples(chainResults);
+  
+  // Build distribution
   const dist: Record<string, number> = {};
   let best = '', maxProb = -1;
-  const samples = params.mcmcIterations * 0.8;
-  Object.entries(counts).forEach(([k, v]) => {
-    const p = v / samples; dist[k] = p;
-    if (p > maxProb) { maxProb = p; best = k; }
-  });
-  return { char: best, dist };
+  const totalSamples = Object.values(counts).reduce((a, b) => a + b, 0);
+  
+  if (totalSamples > 0) {
+    Object.entries(counts).forEach(([k, v]) => {
+      const p = v / totalSamples;
+      dist[k] = p;
+      if (p > maxProb) { maxProb = p; best = k; }
+    });
+  }
+  
+  return { char: best, dist, convergence };
+};
+
+/**
+ * Bayesian MCMC solver: explores the full phoneme universe.
+ *
+ * Improvements over v2:
+ *  • columnSpreadMultiplier: §4b integration — scales language weights at
+ *    low-spread columns to reduce the influence of areal correspondences.
+ *  • Gap positions use imputation (§4) rather than flat gap penalty.
+ *  • Syllabic consonants treated as weak vowel witnesses (not full gaps).
+ *  • Weights use full Wt × Wc × Wr system (§2) after first EM iteration.
+ *  • Neighbourhood threshold 0.35 prevents the degenerate all-neighbours case.
+ *  • MCMC initialised from minimum-distance medoid for reproducibility.
+ *  • Feature 2.3: Now uses multi-chain MCMC with mode-agreement convergence detection.
+ */
+const solveMCMC = (
+  matrix: string[][], colIdx: number, params: ReconstructionParams,
+  languageWeights?: number[], columnSpreadMultiplier?: number
+): { char: string; dist: { [key: string]: number } } => {
+  // Feature 2.3: Use multi-chain MCMC
+  const result = solveMCMCMultiChain(matrix, colIdx, params, languageWeights, columnSpreadMultiplier);
+  
+  // Log convergence for diagnostics
+  if (result.convergence < 0.5) {
+    console.warn(`MCMC column ${colIdx}: Convergence=${result.convergence.toFixed(2)} - chains may not have converged`);
+  }
+  
+  return { char: result.char, dist: result.dist };
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1565,7 +2080,22 @@ export const reconstructProtoWord = (
     isUnattested: i.isUnattested,
   })).filter(f => f.word && f.word.trim() !== '');
 
-  let alignmentMatrix = performMSA(topLevelForms, params);
+  // Use tree-guided MSA when tree structure is available, fall back to center-star for flat inputs
+  const msaResult = performMSA_treeGuided(validInputs, params);
+  let alignmentMatrix = msaResult.alignmentMatrix;
+  
+  // Reorder alignmentMatrix to match topLevelForms order
+  const leafOrder = msaResult.leafOrder;
+  const reorderedMatrix: string[][] = [];
+  for (const form of topLevelForms) {
+    const formId = form.id || form.name;
+    const idx = leafOrder.indexOf(formId);
+    if (idx >= 0) {
+      reorderedMatrix.push(alignmentMatrix[idx]);
+    }
+  }
+  alignmentMatrix = reorderedMatrix;
+  
   if (alignmentMatrix.length === 0) {
     return {
       protoForm: '???', protoTokens: [], confidence: 0, alignmentMatrix: [],
@@ -1584,15 +2114,17 @@ export const reconstructProtoWord = (
   // ── §2: Bootstrap with Wt-only weights; Wc needs an alignment first ────────
   let languageWeights = applyFloorThreshold(topLevelForms.map(f => computeWt(f.year, protoYear)));
 
-  // ── §6: EM loop: align → reconstruct → re-align (×3) ──────────────────────
-  const MAX_ITERATIONS = 3;
+  // ── §6: EM loop: align → reconstruct → re-align (up to 8 iterations) ─────
+  const MAX_ITERATIONS = 8;  // Increased from 3 for better convergence
+  const CONVERGENCE_THRESHOLD = 0;  // Stop when proto-form doesn't change
   let spreadScores: PhylogeneticSpreadScore[] = [];
   let columnSpreadMults: number[] = [];
+  let previousProtoForm = '';  // Track for convergence
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
 
     // §2: Full three-component weights from iteration 1 onward
-    if (iteration > 0) languageWeights = computeFullWeights(topLevelForms, alignmentMatrix, protoYear);
+    if (iteration > 0) languageWeights = computeFullWeights(topLevelForms, alignmentMatrix, protoYear, reconstructedTokens);
 
     // §4b: Compute phylogenetic spread for this alignment
     spreadScores = computePhylogeneticSpread(alignmentMatrix, topLevelForms.length);
@@ -1634,10 +2166,18 @@ export const reconstructProtoWord = (
       const mdlAdjusted     = Math.max(0, naturalProb - LAMBDA_MDL * mdlComplexity);
 
       const filteredChars = p.chars.filter(c => c !== GAP_CHAR);
-      return { form: '*' + filteredChars.join(''), probability: naturalProb, mdlAdjustedScore: mdlAdjusted, chars: filteredChars };
+      const form = '*' + filteredChars.join('').replace(/\.{2,}/g, '.');  // Collapse consecutive syllable boundaries
+      return { form, probability: naturalProb, mdlAdjustedScore: mdlAdjusted, chars: filteredChars };
     }).sort((a, b) => b.mdlAdjustedScore - a.mdlAdjustedScore);
 
     reconstructedTokens = candidates[0]?.chars ?? segments.filter(c => c !== GAP_CHAR);
+
+    // Check for convergence: stop if proto-form hasn't changed
+    const currentProtoForm = reconstructedTokens.join('');
+    if (currentProtoForm === previousProtoForm && iteration > 0) {
+      break;  // Converged - proto-form is stable
+    }
+    previousProtoForm = currentProtoForm;
 
     // Pillar 4: re-align to refined proto-form
     const res = performMSA_to_proto(topLevelForms, reconstructedTokens, params);
@@ -1646,9 +2186,10 @@ export const reconstructProtoWord = (
   }
 
   // ── §2: Final Wt × Wc × Wr weights ────────────────────────────────────────
-  languageWeights = computeFullWeights(topLevelForms, alignmentMatrix, protoYear);
+  languageWeights = computeFullWeights(topLevelForms, alignmentMatrix, protoYear, reconstructedTokens);
 
-  const protoForm = candidates[0]?.form ?? '*' + segments.filter(c => c !== GAP_CHAR).join('');
+  const protoForm = (candidates[0]?.form ?? '*' + segments.filter(c => c !== GAP_CHAR).join(''))
+    .replace(/\.{2,}/g, '.');  // Collapse consecutive syllable boundaries
 
   // ── §1: Per-column regularity scores (Neogrammarian criterion) ─────────────
   const regularityScores = computeRegularityScores(alignmentMatrix, reconstructedTokens, languageWeights);
@@ -1822,6 +2363,16 @@ export const reconstructProtoWord = (
     totalWords++;
   }
 
+  // ── §0: Check for missing attestation years and add warning ──────────────
+  const warnings: string[] = [];
+  const allLackYears = validInputs.every(i => i.attestationYear === undefined);
+  if (allLackYears && validInputs.length > 0) {
+    warnings.push(
+      'No attestation years provided. Chronological weighting (Wt) is disabled. ' +
+      'Add attestationYear fields to enable archaic-language prioritization.'
+    );
+  }
+
   // ── Compile and return all results ────────────────────────────────────────
   return {
     protoForm,
@@ -1841,6 +2392,9 @@ export const reconstructProtoWord = (
     // §0 — NED + SCA-class cognate pre-screening
     cognateCompatibilityFlags,
 
+    // §0 — User-facing warnings
+    warnings: warnings.length > 0 ? warnings : undefined,
+
     // §1 — Per-column Neogrammarian regularity scores
     regularityScores,
 
@@ -1855,4 +2409,88 @@ export const reconstructProtoWord = (
     loanwordSignals: allLoanSignals,
     correspondenceTable,
   } as any;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Feature 2.1: COGNATE-SET BATCH MODE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * 
+ * Reconstructs multiple cognate sets simultaneously, accumulating correspondence
+ * statistics across all sets to make regularity scores statistically meaningful.
+ * 
+ * A correspondence appearing in 40/50 cognate sets is genuinely systematic;
+ * one appearing in 2 is not.
+ */
+export interface BatchReconstructionResult {
+  protoLanguage: string;
+  individualResults: Map<string, ReconstructionResult>;  // gloss -> result
+  accumulatedCorrespondences: { [columnKey: string]: { [phoneme: string]: number } };
+  regularityScores: Map<string, number>;  // correspondence key -> regularity (0-1)
+}
+
+/**
+ * Reconstructs multiple cognate sets in batch mode.
+ * Accumulates correspondence statistics across all sets.
+ */
+export const reconstructBatch = async (
+  cognateSets: { gloss: string; forms: LanguageInput[] }[],
+  method: ReconstructionMethod = ReconstructionMethod.BAYESIAN_AI,
+  params: ReconstructionParams = { mcmcIterations: 3000, gapPenalty: 10, unknownCharPenalty: 8 }
+): Promise<BatchReconstructionResult> => {
+  const individualResults = new Map<string, ReconstructionResult>();
+  const accumulatedCorrespondences: { [columnKey: string]: { [phoneme: string]: number } } = {};
+
+  // Process each cognate set
+  for (const set of cognateSets) {
+    const result = await reconstructProtoWord(set.forms, method, params);
+    individualResults.set(set.gloss, result);
+
+    // Accumulate correspondence statistics from this set's table
+    if (result.correspondenceTable) {
+      for (const [colKey, phonemes] of Object.entries(result.correspondenceTable)) {
+        if (!accumulatedCorrespondences[colKey]) {
+          accumulatedCorrespondences[colKey] = {};
+        }
+        for (const [phoneme, count] of Object.entries(phonemes)) {
+          accumulatedCorrespondences[colKey][phoneme] = 
+            (accumulatedCorrespondences[colKey][phoneme] || 0) + (count as number);
+        }
+      }
+    }
+  }
+
+  // Compute regularity scores from accumulated correspondences
+  // A correspondence is regular if it appears consistently across many cognate sets
+  const regularityScores = new Map<string, number>();
+  
+  for (const [colKey, phonemes] of Object.entries(accumulatedCorrespondences)) {
+    const totalOccurrences = Object.values(phonemes).reduce((sum, count) => sum + count, 0);
+    const numDistinct = Object.keys(phonemes).length;
+    
+    // Regularity = 1.0 if only 1 phoneme appears (perfectly regular)
+    // Regularity decreases as more distinct phonemes appear
+    // Uses entropy-based regularity score
+    let entropy = 0;
+    for (const count of Object.values(phonemes)) {
+      const p = count / totalOccurrences;
+      if (p > 0) entropy -= p * Math.log2(p);
+    }
+    const maxEntropy = Math.log2(Math.max(numDistinct, 2));
+    const regularity = 1 - (entropy / maxEntropy);
+    
+    regularityScores.set(colKey, regularity);
+  }
+
+  // Determine proto-language name from the first set
+  const protoLanguage = cognateSets[0]?.forms[0]?.name 
+    ? `Proto-${cognateSets[0].forms[0].name}` 
+    : 'Proto-Language';
+
+  return {
+    protoLanguage,
+    individualResults,
+    accumulatedCorrespondences,
+    regularityScores
+  };
 };

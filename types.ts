@@ -50,7 +50,19 @@ export interface DistinctiveFeatures {
   // Suprasegmentals & Diacritics
   long: boolean;
   stress: boolean;
-  tone: number;
+  tone?: ToneContour;  // UPDATED: Proper contour representation (Feature 4.3)
+}
+
+/**
+ * Feature 4.3: Tone Contour Representation
+ * Replaces simple `tone: number` with proper contour support for:
+ * - Tone contours (rising, falling, dipping) using Chao tone letters
+ * - Register distinctions (high/mid/low level tones)
+ * - Downstep and upstep
+ */
+export interface ToneContour {
+  levels: number[];   // sequence of Chao tone letters (1=low, 5=high), e.g., [3,5] = rising 35
+  register?: 'default' | 'downstepped' | 'upstepped';
 }
 
 export interface PhonemeDef {
@@ -74,6 +86,61 @@ export interface ReconstructionParams {
   mcmcIterations: number;
   gapPenalty: number;
   unknownCharPenalty: number;
+}
+
+/**
+ * Feature 2.1: Cognate-Set Batch Mode
+ * Groups LanguageInput records by gloss for batch reconstruction.
+ * The correspondence table accumulates counts across all sets before reconstruction,
+ * making regularity scores statistically meaningful.
+ */
+export interface CognateSet {
+  gloss: string;           // The meaning/concept (e.g., "hand", "water", "to run")
+  forms: LanguageInput[];  // Language forms for this gloss
+  cognacyGroup?: string;   // Optional grouping for cognacy sets (for loanword detection)
+}
+
+/**
+ * Feature 5.3: Paradigm/Conjugation Layer
+ * Represents an inflectional or derivational paradigm for a lexeme.
+ * Supports conjugation (verbal), declension (nominal), and adjectival paradigms.
+ */
+export interface ParadigmCell {
+  form: string;           // Phonetic form (IPA)
+  gloss: string;          // Grammatical gloss (e.g., "1SG.PRES", "NOM.SG", "ACC.PL")
+  isIrregular?: boolean;    // Flag for forms that don't follow regular sound changes
+}
+
+export interface Paradigm {
+  id: string;             // Unique identifier for the paradigm
+  lexeme: string;         // Citation form / dictionary headword
+  languageId: string;     // ID of the language this paradigm belongs to
+  languageName: string;   // Display name of the language
+  paradigmType: 'verbal' | 'nominal' | 'adjectival' | 'pronominal';
+  cells: ParadigmCell[];
+  reconstructedStem?: string;  // Filled after reconstruction
+}
+
+/**
+ * Feature 2.1: Batch Reconstruction Result
+ * Contains reconstructed forms for multiple cognate sets,
+ * with accumulated correspondence statistics.
+ */
+export interface BatchReconstructionResult {
+  protoLanguage: string;
+  individualResults: Map<string, ReconstructionResult>;  // gloss -> result
+  accumulatedCorrespondences: CorrespondenceTable;
+  regularityScores: Map<string, number>;  // correspondence key -> regularity (0-1)
+}
+
+/**
+ * Feature 2.1: Correspondence Table Entry
+ * Accumulates evidence across multiple cognate sets.
+ */
+export interface CorrespondenceTable {
+  [columnKey: string]: {
+    [phoneme: string]: number;  // count of occurrences
+  };
 }
 
 /**
@@ -148,12 +215,24 @@ export interface ReconstructionResult {
   analogicalLevelingFlags?: string[];
 
   /**
+   * §0 — User-facing warnings about reconstruction conditions.
+   * E.g., missing attestation years disables chronological weighting.
+   */
+  warnings?: string[];
+
+  /**
    * §1 — Per-column regularity score (0–1).
    * Implements the Neogrammarian regularity criterion computationally:
    * 1.0 = all attested reflexes are regular (match proto or via natural rule).
    * < 0.6 = irregular correspondence, should be flagged for manual review.
    */
   regularityScores?: number[];
+
+  /**
+   * §1 — Correspondence table for accumulated statistics.
+   * Maps column keys to phoneme occurrence counts across languages.
+   */
+  correspondenceTable?: { [columnKey: string]: { [phoneme: string]: number } };
 }
 
 export interface SoundChangeNote {

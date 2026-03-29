@@ -241,10 +241,26 @@ class Rule {
       res = res.replace(/\((?!\*)([^)]+)\)/g, '(?:$1)?');
       res = res.replace(/(\S+)\(\*\)/g, '$1+');
 
+      // Handle dollar-sign capture variables in replacement (not in match)
+      // These will be processed in buildReplacement, here we just validate
+      if (!isMatch) {
+        // $1, $2, etc. are backreferences - keep them as-is for buildReplacement
+        // They refer to capture groups created by <...> in the match pattern
+      }
+
       // Handle sets {a,b,c}
       res = res.replace(/\{([^}]+)\}/g, (_, setStr) => {
         const items = setStr.split(',').map((s: string) => s.trim());
         return `(?:${items.map(escapeRegExp).join('|')})`;
+      });
+
+      // Handle explicit capture groups <...> for Lexurgy-style $1 $2 backreferences
+      res = res.replace(/<([^>]+)>/g, (_, captureContent) => {
+        captureCount++;
+        const groupName = `cap${captureCount}`;
+        // Recursively translate the content inside the capture
+        const innerPattern = translatePart(captureContent, isBefore, isMatch);
+        return `(?<${groupName}>${innerPattern})`;
       });
 
       // Expand Elements
@@ -271,43 +287,89 @@ class Rule {
         }
       });
 
-      // Handle feature variables [@place]
-      res = res.replace(/\[([^\]]*@\w+[^\]]*)\]/g, (_, featureStr) => {
-        const varMatch = featureStr.match(/@(\w+)/);
-        if (varMatch) {
-          const varName = varMatch[1];
-          captureCount++;
-          const groupName = `fvar${captureCount}`;
-          featureVars[varName] = groupName;
-          // Match any IPA phoneme (base + diacritics)
-          return `(?<${groupName}>${phonemePattern})`;
+      // Handle feature variables [@place] and [@place +constraint]
+      // This captures the phoneme AND applies feature constraints
+      res = res.replace(/\[(@\w+)(?:\s+([+-]\w+(?:\s+[!+-]\w+)*))?\]/g, (_, varNameWithAt, featureStr) => {
+        const varName = varNameWithAt.slice(1); // Remove @
+        captureCount++;
+        const groupName = `fvar${captureCount}`;
+        featureVars[varName] = groupName;
+        
+        // If there are feature constraints, apply them
+        if (featureStr) {
+          const criteria: any = {};
+          const negCriteria: any = {};
+          featureStr.split(/\s+/).forEach((f: string) => {
+            if (f.startsWith('!')) {
+              negCriteria[f.slice(1)] = true;
+            } else {
+              criteria[f.slice(1)] = f.startsWith('+');
+            }
+          });
+          
+          // Get phonemes matching criteria
+          let matchingPhonemes = getPhonemesByFeatures(criteria);
+          
+          // Apply negation filters
+          if (Object.keys(negCriteria).length > 0) {
+            matchingPhonemes = matchingPhonemes.filter(p => {
+              for (const [negKey, _] of Object.entries(negCriteria)) {
+                if (matchFeatures(p, { [negKey]: true })) return false;
+              }
+              return true;
+            });
+          }
+          
+          if (matchingPhonemes.length > 0) {
+            return `(?<${groupName}>(?:${matchingPhonemes.map(escapeRegExp).join('|')}))`;
+          }
         }
-        return _;
+        
+        // No constraints - match any IPA phoneme
+        return `(?<${groupName}>${phonemePattern})`;
       });
 
       // Handle features [+feature] attached to something (e.g. S[+fortis], S1[+fortis])
       // or standalone [+feature]
-      res = res.replace(/(@?\w+|{[^}]+}|\[[^\]]+\])?\[([+-]\w+(?:\s+[+-]\w+)*)\]/g, (full, base, featureStr) => {
+      // Support negation: [+vowel !front] means +vowel AND NOT +front
+      res = res.replace(/(@?\w+|{[^}]+}|\[[^\]]+\])?\[([!+-]\w+(?:\s+[!+-]\w+)*)\]/g, (full, base, featureStr) => {
         const criteria: any = {};
+        const negCriteria: any = {};
         featureStr.split(/\s+/).forEach((f: string) => {
-          const val = f.startsWith('+');
-          const key = f.slice(1);
-          criteria[key] = val;
+          if (f.startsWith('!')) {
+            // Negation: !feature means the segment must NOT have this feature
+            const key = f.slice(1);
+            negCriteria[key] = true;
+          } else {
+            const val = f.startsWith('+');
+            const key = f.slice(1);
+            criteria[key] = val;
+          }
         });
 
         if (!base) {
-          // Standalone [+feature]
+          // Standalone [+feature !other]
           const phonemes = getPhonemesByFeatures(criteria);
-          return `(?:${phonemes.map(escapeRegExp).join('|')})`;
+          // Filter out those matching negCriteria
+          const filtered = phonemes.filter(p => {
+            for (const [negKey, _] of Object.entries(negCriteria)) {
+              if (matchFeatures(p, { [negKey]: true })) return false;
+            }
+            return true;
+          });
+          return `(?:${filtered.map(escapeRegExp).join('|')})`;
         }
 
         // Attached to something
-        // If base is a subscript reference like S1, we need to handle it differently
-        // But translatePart is called before subscripts are handled? No, after.
-        // Wait, the regex above matches S1[+fortis] as base=S1, featureStr=+fortis.
-        
         const getFilteredPattern = (members: string[]) => {
-          const filtered = members.filter(m => matchFeatures(m, criteria));
+          let filtered = members.filter(m => matchFeatures(m, criteria));
+          // Apply negation filters
+          filtered = filtered.filter(m => {
+            for (const [negKey, _] of Object.entries(negCriteria)) {
+              if (matchFeatures(m, { [negKey]: true })) return false;
+            }
+            return true;
+          });
           return `(?:${filtered.map(escapeRegExp).join('|')})`;
         };
 
@@ -323,12 +385,16 @@ class Rule {
           const cls = this.engine.getClasses()[base];
           if (cls) return getFilteredPattern(cls);
           
-          // Check if it's a subscript reference already handled?
-          // No, this regex runs before or after?
-          // The order in translatePart matters.
-          
           // If it's a single phoneme
-          return matchFeatures(base, criteria) ? escapeRegExp(base) : '(?!)';
+          const hasPosFeatures = Object.keys(criteria).length > 0;
+          const hasNegFeatures = Object.keys(negCriteria).length > 0;
+          const matchesPos = !hasPosFeatures || matchFeatures(base, criteria);
+          const matchesNeg = hasNegFeatures && Object.keys(negCriteria).every(k => !matchFeatures(base, { [k]: true }));
+          
+          if (matchesPos && (!hasNegFeatures || matchesNeg)) {
+            return escapeRegExp(base);
+          }
+          return '(?!)'; // Impossible match
         }
       });
 
@@ -343,6 +409,120 @@ class Rule {
       res = res.replace(/@(\w+)/g, (_, name) => {
         const cls = this.engine.getClasses()[name];
         return cls ? `(?:${cls.map(escapeRegExp).join('|')})` : escapeRegExp(`@${name}`);
+      });
+
+      // Handle class exclusion syntax: C-k (C minus k), C-{k,p} (C minus k and p), C-[+voice]
+      // This must come AFTER basic class expansion but BEFORE intersection handling
+      res = res.replace(/\b([A-Z])-([^\s&|(){}\[\]]+)/g, (full, className, exclusions) => {
+        const cls = this.engine.getClasses()[className];
+        if (!cls) return full;
+        
+        // Parse exclusions - can be: single phoneme, {list}, or [features]
+        const excludeSet = new Set<string>();
+        
+        if (exclusions.startsWith('{') && exclusions.endsWith('}')) {
+          // Multiple explicit exclusions: C-{k,p}
+          const items = exclusions.slice(1, -1).split(/[,\s]+/).filter((s: string) => s);
+          items.forEach((item: string) => excludeSet.add(item.trim()));
+        } else if (exclusions.startsWith('[') && exclusions.endsWith(']')) {
+          // Feature-based exclusion: C-[+voice]
+          const featureStr = exclusions.slice(1, -1);
+          const criteria: any = {};
+          const negCriteria: any = {};
+          featureStr.split(/\s+/).forEach((f: string) => {
+            if (f.startsWith('!')) {
+              negCriteria[f.slice(1)] = true;
+            } else if (f.startsWith('+') || f.startsWith('-')) {
+              criteria[f.slice(1)] = f.startsWith('+');
+            }
+          });
+          
+          // Find all phonemes in the class that match the criteria
+          for (const phoneme of cls) {
+            let matches = true;
+            for (const [key, val] of Object.entries(criteria)) {
+              if (!matchFeatures(phoneme, { [key]: val })) {
+                matches = false;
+                break;
+              }
+            }
+            if (matches) excludeSet.add(phoneme);
+          }
+        } else {
+          // Single explicit exclusion: C-k
+          excludeSet.add(exclusions);
+        }
+        
+        // Filter out excluded items
+        const filtered = cls.filter((m: string) => !excludeSet.has(m));
+        return filtered.length > 0 
+          ? `(?:${filtered.map(escapeRegExp).join('|')})` 
+          : '(?!)';
+      });
+
+      // Handle intersection (&) and negation (!) operators
+      // Examples: @C&@V (intersection), C&!V (C minus V), @stop&[+voice]
+      res = res.replace(/(\S+)&(!?\S+)/g, (full, left, right) => {
+        // Parse left operand
+        const getMembers = (operand: string): string[] => {
+          // Remove wrapping parens if present
+          operand = operand.replace(/^\((.*)\)$/, '$1');
+          
+          if (operand.startsWith('@')) {
+            const clsName = operand.slice(1);
+            return this.engine.getClasses()[clsName] || [];
+          } else if (operand.startsWith('[') && operand.endsWith(']')) {
+            // Feature specification
+            const featureStr = operand.slice(1, -1);
+            const criteria: any = {};
+            const negCriteria: any = {};
+            featureStr.split(/\s+/).forEach((f: string) => {
+              if (f.startsWith('!')) {
+                negCriteria[f.slice(1)] = true;
+              } else if (f.startsWith('+') || f.startsWith('-')) {
+                criteria[f.slice(1)] = f.startsWith('+');
+              }
+            });
+            let phonemes = getPhonemesByFeatures(criteria);
+            if (Object.keys(negCriteria).length > 0) {
+              phonemes = phonemes.filter(p => {
+                for (const [negKey, _] of Object.entries(negCriteria)) {
+                  if (matchFeatures(p, { [negKey]: true })) return false;
+                }
+                return true;
+              });
+            }
+            return phonemes;
+          } else if (/^[A-Z]$/.test(operand)) {
+            // Single letter class like C, V
+            return this.engine.getClasses()[operand] || [];
+          } else {
+            // Single phoneme
+            return [operand];
+          }
+        };
+
+        const leftMembers = getMembers(left);
+        
+        // Right operand - check for negation prefix
+        const isNegation = right.startsWith('!');
+        const rightOperand = isNegation ? right.slice(1) : right;
+        const rightMembers = getMembers(rightOperand);
+        
+        let result: string[];
+        if (isNegation) {
+          // Subtraction: left minus right
+          const rightSet = new Set(rightMembers);
+          result = leftMembers.filter(m => !rightSet.has(m));
+        } else {
+          // Intersection: left AND right
+          const rightSet = new Set(rightMembers);
+          result = leftMembers.filter(m => rightSet.has(m));
+        }
+        
+        return result.length > 0 
+          ? `(?:${result.map(escapeRegExp).join('|')})` 
+          : '(?!)'; // Impossible match if empty
       });
 
       // Handle spaces as optional separators between segments
@@ -378,10 +558,23 @@ class Rule {
     const beforePart = translatePart(before, true, false);
     const afterPart = translatePart(after, false, false);
 
+    // Handle TARGET: prefix - target conditions without underscore
+    // Convert TARGET:[+feature] to lookaround that checks the match itself
+    let effectiveBeforePart = beforePart;
+    let effectiveAfterPart = afterPart;
+    
+    if (before.startsWith('TARGET:')) {
+      const targetCondition = before.slice(7); // Remove TARGET: prefix
+      const conditionPattern = translatePart(targetCondition, false, false);
+      // Use lookahead to check the matched segment satisfies the condition
+      effectiveBeforePart = `(?=${conditionPattern})`;
+      effectiveAfterPart = afterPart;
+    }
+
     let regexStr = '';
-    if (beforePart) regexStr += `(?<=${beforePart})`;
+    if (effectiveBeforePart) regexStr += `(?<=${effectiveBeforePart})`;
     regexStr += matchPart;
-    if (afterPart) regexStr += `(?=${afterPart})`;
+    if (effectiveAfterPart) regexStr += `(?=${effectiveAfterPart})`;
 
     // Handle exceptions
     if (exceptions.length > 0) {
@@ -408,6 +601,43 @@ class Rule {
 
     // Handle ∅ deletion
     if (result === '∅' || result === '0') return '';
+
+    // Handle dollar-sign backreferences $1, $2, etc. (Lexurgy-style)
+    // These reference capture groups created by <...> in the match pattern
+    result = result.replace(/\$(\d+)/g, (_, num) => {
+      const groupName = `cap${num}`;
+      const capturedValue = groups && groups[groupName];
+      return capturedValue !== undefined ? capturedValue : `$${num}`;
+    });
+
+    // Handle random alternation: a*3 | b*2 | c
+    // Format: option1*weight | option2*weight | option3
+    if (result.includes('|')) {
+      const options: { value: string; weight: number }[] = [];
+      const parts = result.split('|').map(p => p.trim());
+      
+      let totalWeight = 0;
+      for (const part of parts) {
+        const weightMatch = part.match(/^(.*?)(?:\*(\d+(?:\.\d+)?))?$/);
+        if (weightMatch) {
+          const value = weightMatch[1].trim();
+          const weight = weightMatch[2] ? parseFloat(weightMatch[2]) : 1;
+          options.push({ value, weight });
+          totalWeight += weight;
+        }
+      }
+      
+      if (options.length > 0 && totalWeight > 0) {
+        let random = Math.random() * totalWeight;
+        for (const opt of options) {
+          random -= opt.weight;
+          if (random <= 0) {
+            result = opt.value;
+            break;
+          }
+        }
+      }
+    }
 
     // Handle reduplication
     if (result === '__') return fullMatch + fullMatch;
@@ -485,6 +715,13 @@ export class BlendedScaEngine {
   private deferredRules: Record<string, Rule> = {};
   private cleanupRules: Rule[] = [];
   private activeCleanupRules: string[] = [];
+  
+  // Stress configuration
+  private stressPattern: 'initial' | 'final' | 'penultimate' | 'antepenult' | 'trochaic' | 'iambic' | 'dactylic' | 'anapestic' | 'mobile' | 'custom' | null = null;
+  private stressAutoFix: boolean = false;
+  private heavySyllablePattern: string = 'VC';
+  private stressEnforceSafety: boolean = true;
+  private customStressPosition: string = '';
 
   constructor() {
     this.initializeDefaultClasses();
@@ -529,7 +766,7 @@ export class BlendedScaEngine {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line || line.startsWith('//') || line.startsWith('#')) continue;
+      if (!line || line.startsWith('//') || line.startsWith(';')) continue;
 
       let matched = false;
 
@@ -629,7 +866,8 @@ export class BlendedScaEngine {
         }
 
         // Check for undefined classes/elements in target and replacement
-        const classMatches = line.match(/@(\w+)/g);
+        // Exclude feature variables like [@place] - only match @ClassName not inside []
+        const classMatches = line.match(/(?<!\[)@(\w+)/g);
         if (classMatches) {
           classMatches.forEach(m => {
             const name = m.slice(1);
@@ -676,8 +914,130 @@ export class BlendedScaEngine {
     }
   }
 
+  /**
+   * Feature 5.5: Chain Shift Shorthand
+   * Parses chain shift syntax (>>) and expands into ordered Then: stages
+   * 
+   * Example:
+   *   chain(drag) great-vowel-shift:
+   *     iː >> əɪ >> aɪ
+   *     eː >> iː
+   *     aː >> eɪ
+   * 
+   * For drag-chain (default): Changes apply from pushed end first
+   *   Stage 1: aː > eɪ, eː > iː, iː > əɪ
+   *   Stage 2: əɪ > aɪ (only applies to newly created əɪ)
+   * 
+   * For push-chain: Changes apply from initiator first
+   *   Stage 1: iː > əɪ
+   *   Stage 2: əɪ > aɪ, eː > iː
+   */
+  private parseChainShift(
+    name: string, 
+    chainLines: string[], 
+    chainType: 'drag' | 'push',
+    mode: string
+  ) {
+    // Parse each chain line into a sequence of sound changes
+    type ChainStep = { source: string; target: string; envs: string[]; excs: string[] };
+    const chains: ChainStep[][] = [];
+
+    for (const line of chainLines) {
+      // Split by >> to get the chain sequence
+      const parts = line.split(/\s*>>\s*/).map(p => p.trim()).filter(p => p);
+      if (parts.length < 2) continue;
+
+      // Check for environments/exceptions
+      let envs: string[] = ['_'];
+      let excs: string[] = [];
+      
+      // Check if last part has environment
+      const lastPart = parts[parts.length - 1];
+      if (lastPart.includes('/')) {
+        const envIdx = lastPart.indexOf('/');
+        const envStr = lastPart.slice(envIdx + 1).trim();
+        parts[parts.length - 1] = lastPart.slice(0, envIdx).trim();
+        
+        if (envStr.includes('!')) {
+          const split = envStr.split('!');
+          envs = split[0].trim() ? split[0].trim().split('|').map(e => e.trim()).filter(e => e) : ['_'];
+          excs = split.slice(1).map(e => e.trim()).filter(e => e);
+        } else {
+          envs = envStr.split('|').map(e => e.trim()).filter(e => e);
+        }
+      }
+
+      // Create chain steps
+      const chain: ChainStep[] = [];
+      for (let i = 0; i < parts.length - 1; i++) {
+        chain.push({
+          source: parts[i],
+          target: parts[i + 1],
+          envs: [...envs],
+          excs: [...excs]
+        });
+      }
+      chains.push(chain);
+    }
+
+    if (chains.length === 0) return;
+
+    // Determine the number of stages needed
+    const maxStages = Math.max(...chains.map(c => c.length));
+
+    // Create the main rule
+    const ruleOpts: RuleOptions = { name };
+
+    const mainRule = new Rule(name, ruleOpts, this);
+
+    // For drag-chain: reverse the order (start from the end of each chain)
+    // For push-chain: keep normal order
+    const orderedChains = chainType === 'drag' 
+      ? chains.map(c => [...c].reverse()) 
+      : chains;
+
+    // Add stages - each stage handles one step in the chain
+    // For drag-chain: apply changes in reverse order (from destination backward)
+    // For push-chain: apply changes in forward order (from initiator forward)
+    for (let stage = 0; stage < maxStages; stage++) {
+      // Collect all changes for this stage across all chains
+      const stageChanges: ChainStep[] = [];
+      
+      for (const chain of orderedChains) {
+        if (stage < chain.length) {
+          stageChanges.push(chain[stage]);
+        }
+      }
+
+      if (stageChanges.length > 0) {
+        // For drag-chain, ensure this stage only applies to forms that were created in previous stages
+        // This is handled by the natural progression of Then: stages - each stage sees the output of previous stages
+        const stageOpts = chainType === 'drag' && stage > 0 
+          ? { propagate: true } // Ensure changes propagate through newly created forms
+          : {};
+        
+        // Add a stage for this step
+        mainRule.addStage(stageOpts);
+        
+        // Add sub-rules for this stage
+        for (const change of stageChanges) {
+          mainRule.addSubRule(change.source, change.target, change.envs, change.excs, false, {});
+        }
+      }
+    }
+
+    // Add the rule to the appropriate list
+    if (mode === 'deferred') {
+      this.deferredRules[name] = mainRule;
+    } else if (mode === 'cleanup') {
+      this.cleanupRules.push(mainRule);
+    } else {
+      this.rules.push(mainRule);
+    }
+  }
+
   public parse(script: string) {
-    const lines = script.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//') && !l.startsWith('#'));
+    const lines = script.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//') && !l.startsWith(';'));
     
     let currentRule: Rule | null = null;
     let mode: 'rules' | 'deromanizer' | 'romanizer' | 'deferred' | 'cleanup' = 'rules';
@@ -747,27 +1107,44 @@ export class BlendedScaEngine {
         continue;
       }
 
-      if (line.startsWith('Deromanizer:')) {
+      if (line.toLowerCase().startsWith('stress:')) {
+        const stressMatch = line.match(/^Stress:\s*(\w+)(?:\s+auto-fix)?(?:\s+heavy:(\S+))?(?:\s+pos:(\S+))?/i);
+        if (stressMatch) {
+          this.stressPattern = stressMatch[1].toLowerCase() as any;
+          this.stressAutoFix = line.toLowerCase().includes('auto-fix');
+          this.heavySyllablePattern = stressMatch[2] || 'VC';
+          this.customStressPosition = stressMatch[3] || '';
+        }
+        continue;
+      }
+
+      if (line.startsWith('Deromanizer')) {
+        // Check for 'literal' modifier
+        const isLiteral = line.includes('literal');
         this.deromanizer = new Rule('Deromanizer', {}, this);
+        (this.deromanizer as any).literal = isLiteral;
         currentRule = this.deromanizer;
         mode = 'deromanizer';
         continue;
       }
 
-      if (line.startsWith('Romanizer:')) {
-        this.romanizer = new Rule('Romanizer', {}, this);
-        currentRule = this.romanizer;
-        mode = 'romanizer';
-        continue;
-      }
-
-      if (line.startsWith('Romanizer-')) {
-        const match = line.match(/Romanizer-([\w-]+):/);
-        if (match) {
-          const name = match[1];
-          const r = new Rule(`Romanizer-${name}`, {}, this);
-          this.intermediateRomanizers[name] = r;
-          currentRule = r;
+      if (line.startsWith('Romanizer')) {
+        // Check for 'literal' modifier
+        const isLiteral = line.includes('literal');
+        if (line.startsWith('Romanizer-')) {
+          const match = line.match(/Romanizer-([\w-]+):/);
+          if (match) {
+            const name = match[1];
+            const r = new Rule(`Romanizer-${name}`, {}, this);
+            (r as any).literal = isLiteral;
+            this.intermediateRomanizers[name] = r;
+            currentRule = r;
+            mode = 'romanizer';
+          }
+        } else {
+          this.romanizer = new Rule('Romanizer', {}, this);
+          (this.romanizer as any).literal = isLiteral;
+          currentRule = this.romanizer;
           mode = 'romanizer';
         }
         continue;
@@ -780,8 +1157,22 @@ export class BlendedScaEngine {
       }
 
       if (line.startsWith('Cleanup:')) {
-        mode = 'cleanup';
-        currentRule = null;
+        // Check for off toggle: "Cleanup name: off" or "Cleanup: off"
+        const offMatch = line.match(/Cleanup(?:\s+(\w+))?:\s*off/i);
+        if (offMatch) {
+          const ruleName = offMatch[1];
+          if (ruleName) {
+            // Deactivate specific cleanup rule
+            this.activeCleanupRules = this.activeCleanupRules.filter(n => n !== ruleName);
+          } else {
+            // Deactivate all cleanup rules
+            this.activeCleanupRules = [];
+          }
+          mode = 'rules'; // Reset mode
+          currentRule = null;
+        } else {
+          mode = 'cleanup';
+        }
         continue;
       }
 
@@ -837,6 +1228,128 @@ export class BlendedScaEngine {
         continue;
       }
 
+      /**
+       * Feature 5.5: Chain Shift Shorthand
+       * Parse chain blocks: chain [name]: ... end
+       * Supports >> chaining syntax: iː >> əɪ >> aɪ
+       */
+      const chainMatch = line.match(/^chain(?:\s*\((\w+)\))?\s*([\w-]+)?:/);
+      if (chainMatch) {
+        const chainType = (chainMatch[1] || 'drag') as 'drag' | 'push';
+        const chainName = chainMatch[2] || 'chain-shift';
+        
+        // Collect all lines until we hit a terminator (blank line, end, or new section)
+        const chainLines: string[] = [];
+        let j = i + 1;
+        while (j < lines.length) {
+          const chainLine = lines[j].trim();
+          if (chainLine === '' || chainLine === 'end' || chainLine.startsWith('chain') || 
+              chainLine.startsWith('rule ') || chainLine.startsWith('Class:') ||
+              chainLine.startsWith('Syllables:') || chainLine.startsWith('Deromanizer:') ||
+              chainLine.startsWith('Romanizer:')) {
+            break;
+          }
+          if (chainLine.includes('>>')) {
+            chainLines.push(chainLine);
+          }
+          j++;
+        }
+        
+        // Parse chain shifts and expand into Then: stages
+        if (chainLines.length > 0) {
+          this.parseChainShift(chainName, chainLines, chainType, mode);
+        }
+        
+        i = j - 1; // Skip processed lines
+        continue;
+      }
+
+      // Handle block syntax: [block] ... [end]
+      if (line === '[block]') {
+        // Collect all lines until [end]
+        const blockLines: string[] = [];
+        let j = i + 1;
+        while (j < lines.length) {
+          const blockLine = lines[j].trim();
+          if (blockLine === '[end]') break;
+          if (blockLine && !blockLine.startsWith('//') && !blockLine.startsWith(';')) {
+            blockLines.push(blockLine);
+          }
+          j++;
+        }
+        
+        // Create a rule with propagate mode for the block
+        if (blockLines.length > 0) {
+          const blockRule = new Rule('block', { propagate: true }, this);
+          for (const blockLine of blockLines) {
+            this.parseSubRuleLine(blockRule, blockLine, false);
+          }
+          this.rules.push(blockRule);
+        }
+        
+        i = j; // Skip to [end] line
+        continue;
+      }
+
+      // Handle "except" for exception lists: rule except word1 word2
+      const exceptMatch = line.match(/(.+)\s+except\s+(.+)/i);
+      if (exceptMatch && line.includes('>')) {
+        const rulePart = exceptMatch[1].trim();
+        const exceptionWords = exceptMatch[2].trim().split(/\s+/);
+        
+        // Parse the rule part normally but add exception words
+        // We'll store exceptions in a way the rule can access
+        const r = currentRule || new Rule('unnamed', {}, this);
+        (r as any).exceptionWords = exceptionWords;
+        
+        if (!currentRule) {
+          this.parseSubRuleLine(r, rulePart, false);
+          this.rules.push(r);
+        } else {
+          this.parseSubRuleLine(r, rulePart, false);
+        }
+        continue;
+      }
+
+      // Handle custom segment definitions: feat: x = +f1 -f2
+      const featMatch = line.match(/^feat:\s*(\S+)\s*=\s*(.+)/i);
+      if (featMatch) {
+        const symbol = featMatch[1];
+        const featureSpec = featMatch[2].trim();
+        
+        // Parse feature specification
+        const criteria: any = {};
+        featureSpec.split(/\s+/).forEach((f: string) => {
+          if (f.startsWith('+') || f.startsWith('-')) {
+            criteria[f.slice(1)] = f.startsWith('+');
+          }
+        });
+        
+        // If it's a digraph (multi-character), we need to add it to FEATURE_MAP
+        // For now, add it as a custom class entry
+        if (symbol.length > 1) {
+          // It's a digraph - add to a special digraphs class
+          if (!this.classes['digraphs']) {
+            this.classes['digraphs'] = [];
+          }
+          this.classes['digraphs'].push(symbol);
+          
+          // Store features for the digraph
+          (this as any).customFeatures = (this as any).customFeatures || {};
+          (this as any).customFeatures[symbol] = criteria;
+        } else {
+          // Single character - add as alias to existing or custom
+          // For now, add to custom class
+          if (!this.classes['custom']) {
+            this.classes['custom'] = [];
+          }
+          this.classes['custom'].push(symbol);
+          (this as any).customFeatures = (this as any).customFeatures || {};
+          (this as any).customFeatures[symbol] = criteria;
+        }
+        continue;
+      }
+
       if (line.includes('>') || line.includes('=>') || line.includes('->') || line.includes('→')) {
         if (currentRule) {
           this.parseSubRuleLine(currentRule, line, false);
@@ -885,19 +1398,35 @@ export class BlendedScaEngine {
       replacement = envParts[0].trim();
       const envStr = envParts[1].trim();
       
+      // Handle target conditions: env without _ means target feature check
+      // e.g., V > [+nasal] / [+stress]  (nasalize stressed vowels)
+      // vs  V > [+nasal] / _[+nasal] (nasalize vowel before nasal)
+      
       if (envStr.includes('!')) {
+        // Handle negation: split on ! for exceptions
         const splitEnvs = envStr.split('!');
         const envPart = splitEnvs[0].trim();
         if (envPart) {
-          envs = envPart.split('|').map(e => e.trim()).filter(e => e);
+          // Split on comma for multiple environments
+          envs = envPart.split(/,|\|/).map(e => e.trim()).filter(e => e);
         } else {
-          // If env is empty but exc exists, e.g. ! E_, default to _
           envs = ['_'];
         }
-        excs = splitEnvs.slice(1).map(e => e.trim());
+        excs = splitEnvs.slice(1).map(e => e.trim()).filter(e => e);
       } else {
-        envs = envStr.split('|').map(e => e.trim()).filter(e => e);
+        // Split on comma or | for multiple environments
+        envs = envStr.split(/,|\|/).map(e => e.trim()).filter(e => e);
       }
+      
+      // Convert target conditions (no _) to proper format
+      // A target condition like [+stress] becomes _ with a lookahead/lookbehind
+      envs = envs.map(env => {
+        if (!env.includes('_')) {
+          // Target condition - wrap in special marker for buildRegex to handle
+          return `TARGET:${env}`;
+        }
+        return env;
+      });
     }
 
     // Strip comments in parentheses from environments and exceptions
@@ -1021,6 +1550,115 @@ export class BlendedScaEngine {
     return result;
   }
 
+  /**
+   * Check if a syllable is "heavy" based on the user-defined pattern
+   * Default: VC (long vowel or closed syllable)
+   */
+  private isHeavySyllable(syllable: string): boolean {
+    const phonemes = tokenizeIPA(syllable);
+    const pattern = this.heavySyllablePattern;
+    
+    // V = vowel/diphthong, C = consonant
+    let syllablePattern = '';
+    for (const p of phonemes) {
+      const f = getEffectiveFeatures(p);
+      if (f?.syllabic) {
+        syllablePattern += 'V';
+      } else {
+        syllablePattern += 'C';
+      }
+    }
+    
+    // Check if syllable matches heavy pattern
+    // Simple pattern matching: VC means any syllable with V followed by C (closed)
+    // VV means long vowel/diphthong
+    if (pattern === 'VC') {
+      return syllablePattern.includes('VC');
+    } else if (pattern === 'VV') {
+      return /VV/.test(syllablePattern);
+    } else if (pattern === 'VVC' || pattern === 'VVCC') {
+      return /VV/.test(syllablePattern);
+    }
+    
+    return false;
+  }
+
+  /**
+   * Assign stress to syllables based on the configured pattern
+   */
+  private assignStress(syllabifiedWord: string): string {
+    if (!this.stressPattern) return syllabifiedWord;
+    
+    const syllables = syllabifiedWord.split('.');
+    if (syllables.length === 0) return syllabifiedWord;
+    
+    let stressIndex: number = -1;
+    
+    switch (this.stressPattern) {
+      case 'initial':
+        stressIndex = 0;
+        break;
+      case 'final':
+        stressIndex = syllables.length - 1;
+        break;
+      case 'penultimate':
+        stressIndex = Math.max(0, syllables.length - 2);
+        break;
+      case 'antepenult':
+        stressIndex = Math.max(0, syllables.length - 3);
+        break;
+      case 'trochaic': // Strong-weak from left
+        return syllables.map((s, i) => i % 2 === 0 ? `ˈ${s}` : s).join('.');
+      case 'iambic': // Weak-strong from left
+        return syllables.map((s, i) => i % 2 === 1 ? `ˈ${s}` : s).join('.');
+      case 'dactylic': // Strong-weak-weak from left
+        return syllables.map((s, i) => i % 3 === 0 ? `ˈ${s}` : s).join('.');
+      case 'anapestic': // Weak-weak-strong from left
+        return syllables.map((s, i) => i % 3 === 2 ? `ˈ${s}` : s).join('.');
+      case 'mobile':
+        // Stress moves to the rightmost heavy syllable, defaulting to initial
+        stressIndex = 0;
+        for (let i = syllables.length - 1; i >= 0; i--) {
+          if (this.isHeavySyllable(syllables[i])) {
+            stressIndex = i;
+            break;
+          }
+        }
+        break;
+      case 'custom':
+        // Parse custom position: can be absolute (0,1,2) or negative (-1,-2)
+        const pos = parseInt(this.customStressPosition, 10);
+        if (!isNaN(pos)) {
+          if (pos >= 0) {
+            stressIndex = Math.min(pos, syllables.length - 1);
+          } else {
+            stressIndex = Math.max(0, syllables.length + pos);
+          }
+        }
+        break;
+    }
+    
+    if (stressIndex >= 0 && stressIndex < syllables.length) {
+      syllables[stressIndex] = `ˈ${syllables[stressIndex]}`;
+    }
+    
+    return syllables.join('.');
+  }
+
+  /**
+   * Fix stress placement after sound changes if auto-fix is enabled
+   */
+  private fixStress(word: string): string {
+    if (!this.stressAutoFix && !this.stressEnforceSafety) return word;
+    
+    // Remove existing stress marks
+    const unstressed = word.replace(/[ˈˌ]/g, '');
+    
+    // Re-syllabify and re-assign stress
+    const syllabified = this.syllabify(unstressed);
+    return this.assignStress(syllabified);
+  }
+
   private applyToWord(word: string): BlendedScaResult {
     const history: { rule: string; before: string; after: string }[] = [];
     const intermediateRomanizations: Record<string, string> = {};
@@ -1038,11 +1676,34 @@ export class BlendedScaEngine {
     // Handle phrases by processing each word separately for syllabification
     // but applying rules to the whole phrase to support ##
     const words = current.split(/\s+/);
-    current = words.map(w => this.syllabify(w)).join(' ');
+    current = words.map(w => {
+      const syllabified = this.syllabify(w);
+      // Assign stress if pattern is configured
+      return this.stressPattern ? this.assignStress(syllabified) : syllabified;
+    }).join(' ');
 
     for (const rule of this.rules) {
+      // Check if rule has exception words and skip if current word matches
+      const exceptionWords = (rule as any).exceptionWords;
+      if (exceptionWords && exceptionWords.length > 0) {
+        // Normalize current word for comparison (remove syllable markers and stress)
+        const normalizedWord = current.replace(/[.ˈˌ]/g, '');
+        const isException = exceptionWords.some((ew: string) => 
+          normalizedWord === ew || current.includes(ew)
+        );
+        if (isException) {
+          continue; // Skip this rule for exception words
+        }
+      }
+      
       const before = current;
       current = rule.apply(current);
+      
+      // Fix stress if auto-fix is enabled and word changed
+      if (current !== before && this.stressAutoFix && this.stressPattern) {
+        current = this.fixStress(current);
+      }
+      
       if (current !== before) {
         history.push({ rule: rule.name || 'unnamed', before, after: current });
       }

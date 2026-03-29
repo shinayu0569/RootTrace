@@ -1,6 +1,6 @@
 
 import { DistinctiveFeatures } from '../types';
-import { featureMatrix } from './featureMatrix';
+import { FEATURE_MAP, getEffectiveFeatures } from './phonetics';
 
 /**
  * Weights for different feature categories.
@@ -77,15 +77,36 @@ export function getWeightedDistance(f1: DistinctiveFeatures, f2: DistinctiveFeat
 
 /**
  * Calculates the phonetic distance between two symbols.
+ * Uses FEATURE_MAP (200+ segments) with diacritic support via getEffectiveFeatures.
  */
 export function phonemeDistance(s1: string, s2: string): number {
   if (s1 === s2) return 0;
   if (s1 === '-' || s2 === '-') return 1.0; // Gap penalty
 
-  const f1 = featureMatrix.getFeatures(s1);
-  const f2 = featureMatrix.getFeatures(s2);
+  const f1 = getEffectiveFeatures(s1);
+  const f2 = getEffectiveFeatures(s2);
 
-  if (!f1 || !f2) return 0.8; // High distance for unknown symbols
+  // If either is unknown, compute distance from whatever features are available
+  if (!f1 || !f2) {
+    // Partial match: if both are clearly consonants or both vowels, use 0.5
+    // otherwise 0.9 (class mismatch)
+    const s1InMap = s1 in FEATURE_MAP;
+    const s2InMap = s2 in FEATURE_MAP;
+    if (!s1InMap && !s2InMap) return 0.9; // Both unknown
+    
+    // One known, one unknown - check if class matches
+    const knownChar = s1InMap ? s1 : s2;
+    const knownFeatures = FEATURE_MAP[knownChar];
+    const knownClass = knownFeatures.syllabic ? 'V' : (knownFeatures.consonantal ? 'C' : '?');
+    
+    // For unknown, try to infer from character properties
+    // Vowels are typically in certain Unicode ranges or common letters
+    const unknownChar = s1InMap ? s2 : s1;
+    const isVowelLike = /[aeiouyɑɛɔæøœɪʊəɨʉɯ]/i.test(unknownChar);
+    const unknownClass = isVowelLike ? 'V' : 'C';
+    
+    return knownClass === unknownClass ? 0.5 : 0.9;
+  }
 
   return getWeightedDistance(f1, f2);
 }
@@ -129,7 +150,8 @@ export function buildDistanceMatrix(phonemes: string[]): number[][] {
  * Finds the N nearest neighbours for a phoneme.
  */
 export function nearestNeighbours(symbol: string, n: number = 5): { symbol: string, distance: number }[] {
-  const allSymbols = featureMatrix.getAllSymbols();
+  // Use FEATURE_MAP keys instead of featureMatrix
+  const allSymbols = Object.keys(FEATURE_MAP);
   const distances = allSymbols
     .filter(s => s !== symbol)
     .map(s => ({ symbol: s, distance: phonemeDistance(symbol, s) }))
