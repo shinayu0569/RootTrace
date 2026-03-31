@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "npm run build",
+  "buildCommand": "rm -f package-lock.json && npm install && npm run build",
   "outputDirectory": "dist",
   "framework": "vite"
 }
