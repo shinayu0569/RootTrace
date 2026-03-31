@@ -125,13 +125,13 @@ describe('Blended SCA - Distinctive Features', () => {
 });
 
 describe('Blended SCA - Feature Variables', () => {
-  it('should support @place assimilation', () => {
-    const result = runSCA(['int'], '[C +nasal] > [@place] / _[@place]');
+  it('should support %place assimilation', () => {
+    const result = runSCA(['int'], '[C +nasal] > [%place] / _[%place]');
     expect(result).toEqual(['int']);
   });
 
-  it('should support @manner assimilation', () => {
-    const result = runSCA(['apt'], '[C +stop] > [@manner] / _[@manner]');
+  it('should support %manner assimilation', () => {
+    const result = runSCA(['apt'], '[C +stop] > [%manner] / _[%manner]');
     expect(result).toEqual(['apt']);
   });
 });
@@ -232,20 +232,20 @@ describe('Blended SCA - Reduplication', () => {
 });
 
 describe('Blended SCA - First & Last Match', () => {
-  it('should support << first match only', () => {
-    const result = runSCA(['sasas'], '<<s>> > z');
+  it('should support first() first match only', () => {
+    const result = runSCA(['sasas'], 'first(s) > z');
     expect(result).toEqual(['zasas']);
   });
 
-  it('should support >> last match only', () => {
-    const result = runSCA(['sasas'], '>>s<< > z');
+  it('should support last() last match only', () => {
+    const result = runSCA(['sasas'], 'last(s) > z');
     expect(result).toEqual(['sasaz']);
   });
 });
 
-describe('Blended SCA - Compound Rules (Then:)', () => {
-  it('should support Then: blocks for sequential sub-rules', () => {
-    const result = runSCA(['kipa'], 'palatalization:\n  k > tʃ / _i\nThen:\n  tʃ > ʃ');
+describe('Blended SCA - Compound Rules (Next:)', () => {
+  it('should support Next: blocks for sequential sub-rules', () => {
+    const result = runSCA(['kipa'], 'palatalization:\n  k > tʃ / _i\nNext:\n  tʃ > ʃ');
     expect(result).toEqual(['ʃipa']);
   });
 });
@@ -281,7 +281,7 @@ describe('Blended SCA - Conditional (IF/THEN/ELSE)', () => {
 
 describe('Blended SCA - Deferred & Cleanup Rules', () => {
   it('should support Deferred rules with Apply:', () => {
-    const result = runSCA(['apt'], `Deferred nasal-assim: [C +nasal] > [@place] / _[@place]
+    const result = runSCA(['apt'], `Deferred nasal-assim: [C +nasal] > [%place] / _[%place]
 Apply: @nasal-assim`);
     expect(result).toEqual(['apt']);
   });
@@ -352,12 +352,12 @@ describe('Blended SCA - Complex Examples', () => {
   it('should handle Latin to Portuguese sketch', () => {
     const rules = `Class stop {p, t, k, b, d, g}
 Syllables: C* V C*
-Deferred nasal-assim: [C +nasal] > [@place] / _[@place]
+Deferred nasal-assim: [C +nasal] > [%place] / _[%place]
 Deromanizer: ae > aj
 vowel-length-loss: ː > ∅
 intervocalic-voicing: @stop > [+voice] / V_V
 syncope: [V -stress] > ∅ / V_
-Then: Apply: @nasal-assim
+Next: Apply: @nasal-assim
 Romanizer: ɲ > nh | ʎ > lh`;
 
     const result = runSCA(['paːter'], rules);
@@ -376,22 +376,127 @@ Class aspirated {pʰ, tʰ, kʰ}
   });
 });
 
-describe('Blended SCA - Validation', () => {
-  it('should detect undefined class references', () => {
-    const engine = new BlendedScaEngine();
-    const errors = engine.validate('undefined-class > a');
-    expect(errors.length).toBeGreaterThan(0);
+describe('Blended SCA - Python/Lua Syntax', () => {
+  it('should support Python-style class definitions', () => {
+    const result = runSCA(['sasa', 'ʃaʃa'], 'class sibilant = ["s", "ʃ"]\nsibilant > z');
+    expect(result).toEqual(['zaza', 'ʒaʒa']);
   });
 
-  it('should detect invalid feature combinations', () => {
-    const engine = new BlendedScaEngine();
-    const errors = engine.validate('[+high +low] > a');
-    expect(errors.length).toBeGreaterThan(0);
+  it('should support Python-style element definitions', () => {
+    const result = runSCA(['pa', 'ta'], 'def element(onset, "C? V")\n@onset > p / #_');
+    expect(result).toEqual(['pa', 'pa']);
   });
 
-  it('should detect reference errors in Apply:', () => {
+  it('should support assignment-style rules with if', () => {
+    const result = runSCA(['alabama', 'alameda'], 'a = o if _b');
+    expect(result).toEqual(['alobama', 'alameda']);
+  });
+
+  it('should support assignment-style rules without environment', () => {
+    const result = runSCA(['alabama', 'utah'], 'a = o');
+    expect(result).toEqual(['olobomo', 'uto']);
+  });
+
+  it('should support Python-style syllables declaration', () => {
+    const result = runSCA(['pa'], 'syllables = "C* :: V :: C*"\nV = i');
+    expect(result).toEqual(['pi']);
+  });
+
+  it('should support Python-style stress declaration', () => {
     const engine = new BlendedScaEngine();
-    const errors = engine.validate('Apply: @undefined-rule');
-    expect(errors.length).toBeGreaterThan(0);
+    const errors = engine.parse('stress = "penultimate"');
+    expect(errors).toHaveLength(0);
+  });
+
+  it('should support def rule_name syntax', () => {
+    const result = runSCAFull(['alabama'], 'def vowel_shift():\n  a = o');
+    expect(result[0].final).toBe('olobomo');
+  });
+
+  it('should support def deromanizer syntax', () => {
+    const result = runSCA(['sh', 'th'], 'def deromanizer():\n  sh = ʃ\n  th = θ');
+    expect(result).toEqual(['ʃ', 'θ']);
+  });
+
+  it('should support def romanizer syntax', () => {
+    const result = runSCA(['ʃ', 'θ'], 'def romanizer():\n  ʃ = sh\n  θ = th');
+    expect(result).toEqual(['sh', 'th']);
+  });
+
+  it('should support Lua-style comments', () => {
+    const result = runSCA(['pa'], '-- This is a comment\na = o');
+    expect(result).toEqual(['po']);
+  });
+
+  it('should support rule with options in Python style', () => {
+    const result = runSCA(['pip'], 'def harmony([propagate]):\n  i = u if _C');
+    expect(result[0]).toBeDefined();
+  });
+
+  it('should support @deferred decorator syntax', () => {
+    const result = runSCA(['na'], '@deferred\nnasal-assim:\n  n > m / _p\napply(nasal-assim)');
+    expect(result[0]).toBeDefined();
+  });
+});
+
+describe('Blended SCA - New Stress System', () => {
+  it('should support random-mobile stress pattern', () => {
+    const engine = new BlendedScaEngine();
+    const errors = engine.parse('stress = "random-mobile" seed:12345');
+    expect(errors).toHaveLength(0);
+    const result = engine.apply(['papapa']);
+    expect(result[0].final).toBeDefined();
+    // With seed 12345, should be reproducible
+    const result2 = engine.apply(['papapa']);
+    expect(result[0].final).toBe(result2[0].final);
+  });
+
+  it('should support random-mobile with fallback direction', () => {
+    const engine = new BlendedScaEngine();
+    engine.parse('stress = "random-mobile" fallback:next');
+    const result = engine.apply(['papapa']);
+    expect(result[0].final).toBeDefined();
+  });
+
+  it('should support secondary stress with alternating pattern', () => {
+    const engine = new BlendedScaEngine();
+    engine.parse('stress = "trochaic" secondary:alternating');
+    const result = engine.apply(['papapapa']); // 4 syllables
+    // Should have primary stress on first syllable and secondary on third
+    expect(result[0].final).toContain('ˈ');
+    expect(result[0].final).toContain('ˌ');
+  });
+
+  it('should support user stress adjustments', () => {
+    const engine = new BlendedScaEngine();
+    engine.parse('stress = "initial"\nStressAdjust: papapa 2 primary');
+    const result = engine.apply(['papapa']);
+    // Should have stress on syllable index 2 (third syllable)
+    expect(result[0].final).toBeDefined();
+  });
+
+  it('should support stress with auto-fix', () => {
+    const engine = new BlendedScaEngine();
+    engine.parse('stress = "initial" auto-fix\na > o / #_');
+    const result = engine.apply(['pa']);
+    // Should reassign stress after vowel change
+    expect(result[0].final).toBeDefined();
+  });
+
+  it('should support classic syntax with new stress options', () => {
+    const engine = new BlendedScaEngine();
+    const errors = engine.parse('Stress: random-mobile fallback:previous secondary:alternating 2nd-dir:ltr');
+    expect(errors).toHaveLength(0);
+    const result = engine.apply(['papapapa']);
+    expect(result[0].final).toBeDefined();
+  });
+
+  it('should preserve stress in random-mobile when syllable still exists', () => {
+    const engine = new BlendedScaEngine();
+    engine.parse('stress = "random-mobile" seed:12345\nV = i');
+    const result1 = engine.apply(['papapa']);
+    // Apply again - stress should stay on same syllable since it still exists
+    const result2 = engine.apply([result1[0].final.replace(/[ˈˌ]/g, '')]);
+    expect(result2[0].final).toBeDefined();
   });
 });

@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Loader2, AlertCircle, History, HelpCircle, X, Blocks, FileText } from 'lucide-react';
+import { Play, Loader2, AlertCircle, History, HelpCircle, X, Blocks, FileText, Download, Upload } from 'lucide-react';
 import { BlendedScaEngine, ScaError } from '@/services/blendedSca';
 import { featureMatrix } from '@/services/featureMatrix';
 import SyntaxGuide from './SyntaxGuide';
 import BlockBasedScaEditor, { blocksToSyntax, syntaxToBlocks } from './BlockBasedScaEditor';
-import { Block } from './BlockBasedScaEditor';
+import { exportToText, exportToBlocks, exportToJSON, importFromJSON, textToBlocks, blocksToText, Block } from '@/services/scaImportExport';
+import { highlightSCA, TOKEN_COLORS, renderHighlightedLine, tokenizeLine } from './SCASyntaxHighlighter';
+import { SCAEditor } from './SCAEditor.tsx';
 
 export default function SoundChangeApplier() {
   const [editorMode, setEditorMode] = useState<'text' | 'block'>('text');
@@ -34,18 +36,20 @@ export default function SoundChangeApplier() {
   };
 
   // Handle block editor changes
-  const handleBlockChange = (syntax: string, blocks: Block[]) => {
-    setBlockRules(blocks);
+  const handleBlockChange = (syntax: string) => {
     // Also update rules text for validation
     setRules(syntax);
   };
-  const [outputWords, setOutputWords] = useState<string[]>([]);
+  const [outputWords, setOutputWords] = useState<{ final: string; syllabified: string | null }[]>([]);
   const [history, setHistory] = useState<{ word: string, changes: { rule: string, result: string }[] }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<ScaError[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showSyllableBoundaries, setShowSyllableBoundaries] = useState(false);
+  const [exportImportError, setExportImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -65,6 +69,85 @@ export default function SoundChangeApplier() {
       backdropRef.current.scrollTop = textareaRef.current.scrollTop;
       backdropRef.current.scrollLeft = textareaRef.current.scrollLeft;
     }
+  };
+
+  // Export handlers
+  const handleExportText = () => {
+    const text = editorMode === 'text' ? rules : blocksToSyntax(blockRules);
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sound-changes.sca';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportBlocks = () => {
+    const blocks = editorMode === 'block' ? blockRules : textToBlocks(rules).blocks;
+    const json = exportToJSON(blocks, { 
+      mode: editorMode, 
+      timestamp: new Date().toISOString(),
+      inputWords 
+    });
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sound-changes.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        
+        if (file.name.endsWith('.json')) {
+          // Import JSON blocks
+          const { blocks, errors } = importFromJSON(content);
+          if (errors.length > 0) {
+            setExportImportError(`Import errors: ${errors.join(', ')}`);
+            return;
+          }
+          setBlockRules(blocks);
+          // Convert to text for consistency
+          const text = blocksToText(blocks);
+          setRules(text.text);
+          if (text.errors.length > 0) {
+            setExportImportError(`Conversion warnings: ${text.errors.join(', ')}`);
+          } else {
+            setExportImportError(null);
+          }
+          // Switch to text mode for imported blocks
+          setEditorMode('text');
+        } else {
+          // Import as text (SCA file)
+          setRules(content);
+          setExportImportError(null);
+          setEditorMode('text');
+        }
+      } catch (err: any) {
+        setExportImportError(`Import failed: ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
+    
+    // Reset file input
+    event.target.value = '';
   };
 
   const handleApply = async () => {
@@ -89,7 +172,10 @@ export default function SoundChangeApplier() {
       
       const results = engine.apply(words);
 
-      setOutputWords(results.map(r => r.final));
+      setOutputWords(results.map(r => ({
+        final: r.final,
+        syllabified: showSyllableBoundaries ? engine.syllabifyWords(words.map((w, i) => r.final)) : null
+      })));
       setHistory(results.map(r => ({ 
         word: r.original, 
         changes: r.history.map(h => ({ rule: h.rule, result: h.after }))
@@ -138,6 +224,33 @@ export default function SoundChangeApplier() {
                 </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-4">
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={handleExportText}
+                    className="flex items-center gap-1 sm:gap-2 text-[10px] font-black uppercase tracking-widest text-rt-muted hover:text-rt-accent transition-colors"
+                    title="Export as text (.sca)"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span className="hidden sm:inline">Text</span>
+                  </button>
+                  <button 
+                    onClick={handleExportBlocks}
+                    className="flex items-center gap-1 sm:gap-2 text-[10px] font-black uppercase tracking-widest text-rt-muted hover:text-rt-accent transition-colors"
+                    title="Export as JSON (.json)"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span className="hidden sm:inline">JSON</span>
+                  </button>
+                  <button 
+                    onClick={handleImportClick}
+                    className="flex items-center gap-1 sm:gap-2 text-[10px] font-black uppercase tracking-widest text-rt-muted hover:text-rt-accent transition-colors"
+                    title="Import from file"
+                  >
+                    <Upload className="w-3 h-3" />
+                    <span className="hidden sm:inline">Import</span>
+                  </button>
+                </div>
+                <div className="w-px h-4 bg-rt-border" />
                 <button 
                   onClick={() => setShowHelp(true)}
                   className="flex items-center gap-1 sm:gap-2 text-[10px] font-black uppercase tracking-widest text-rt-muted hover:text-rt-accent transition-colors"
@@ -157,6 +270,29 @@ export default function SoundChangeApplier() {
             
             {showHelp && <SyntaxGuide onClose={() => setShowHelp(false)} />}
 
+            {/* Hidden file input for import */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".sca,.json,.txt"
+              onChange={handleFileImport}
+              className="hidden"
+            />
+
+            {/* Export/Import error display */}
+            {exportImportError && (
+              <div className="mb-4 p-3 bg-rt-error/10 border border-rt-error rounded-lg flex items-start gap-2 text-rt-error text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{exportImportError}</span>
+                <button 
+                  onClick={() => setExportImportError(null)}
+                  className="ml-auto hover:opacity-70"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
             <p className="text-xs text-rt-muted font-bold uppercase tracking-wider mb-4 hidden sm:block">
               {editorMode === 'text' 
                 ? 'Define classes and rules. Supports Then: blocks, LTR/RTL, and feature changes.'
@@ -164,34 +300,14 @@ export default function SoundChangeApplier() {
             </p>
             {editorMode === 'text' ? (
               <div className="relative w-full h-48 sm:h-64 lg:h-80 bg-rt-input border border-rt-border rounded-2xl focus-within:border-rt-accent transition-all overflow-hidden">
-                <div 
-                  ref={backdropRef}
-                  className="absolute inset-0 p-3 sm:p-4 font-mono text-xs sm:text-sm overflow-hidden whitespace-pre-wrap break-words text-transparent pointer-events-none"
-                  aria-hidden="true"
-                >
-                  {rules.split('\n').map((line, i, arr) => {
-                    const error = validationErrors.find(e => e.line === i + 1);
-                    const isLast = i === arr.length - 1;
-                    const displayLine = (line === '' && error) ? ' ' : line;
-                    const content = displayLine + (isLast ? '' : '\n');
-                    if (error) {
-                      return <span key={i} className="bg-red-500/30 border-b border-red-500/50" title={error.message}>{content}</span>;
-                    }
-                    return <span key={i}>{content}</span>;
-                  })}
-                </div>
-                <textarea
-                  ref={textareaRef}
+                <SCAEditor
                   value={rules}
-                  onChange={(e) => setRules(e.target.value)}
-                  onScroll={handleScroll}
-                  className="absolute inset-0 w-full h-full p-3 sm:p-4 font-mono text-xs sm:text-sm bg-transparent text-rt-text outline-none resize-none z-10"
-                  placeholder={"Class C {p, t, k}\nrule-name:\n  a => e / _ i"}
-                  spellCheck={false}
+                  onChange={(value) => setRules(value)}
+                  className="h-full w-full"
                 />
               </div>
             ) : (
-              <div className="h-64 sm:h-80 border border-rt-border rounded-2xl overflow-hidden">
+              <div className="h-[500px] sm:h-[600px] lg:h-[700px] border border-rt-border rounded-2xl overflow-hidden flex flex-col">
                 <BlockBasedScaEditor 
                   initialBlocks={blockRules}
                   onChange={handleBlockChange}
@@ -201,10 +317,43 @@ export default function SoundChangeApplier() {
             {validationErrors.length > 0 && (
               <div className="mt-4 space-y-2">
                 {validationErrors.map((err, i) => (
-                  <div key={i} className="flex items-start gap-2 text-xs text-red-400 bg-red-500/10 p-2 rounded-lg border border-red-500/20">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <div>
-                      <span className="font-bold">Line {err.line}:</span> {err.message}
+                  <div 
+                    key={i} 
+                    className={`flex flex-col gap-2 text-xs p-3 rounded-lg border ${
+                      err.severity === 'error' 
+                        ? 'text-red-400 bg-red-500/10 border-red-500/20' 
+                        : err.severity === 'warning'
+                        ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                        : 'text-blue-400 bg-blue-500/10 border-blue-500/20'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold">Line {err.line}</span>
+                          <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${
+                            err.severity === 'error' 
+                              ? 'bg-red-500/20 text-red-300' 
+                              : err.severity === 'warning'
+                              ? 'bg-amber-500/20 text-amber-300'
+                              : 'bg-blue-500/20 text-blue-300'
+                          }`}>
+                            {err.type}
+                          </span>
+                        </div>
+                        <p className="font-medium">{err.message}</p>
+                        {err.snippet && (
+                          <code className="block mt-2 px-2 py-1.5 bg-black/20 rounded font-mono text-[10px] truncate">
+                            {err.snippet}
+                          </code>
+                        )}
+                        {err.suggestion && (
+                          <p className="mt-2 text-[10px] opacity-80 italic">
+                            💡 {err.suggestion}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -237,6 +386,23 @@ export default function SoundChangeApplier() {
         <div className="flex-1 space-y-4">
           <h2 className="text-base sm:text-lg font-bold text-rt-text uppercase tracking-widest mb-2">
             {showHistory ? 'Change History' : 'Output'}
+            {!showHistory && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowSyllableBoundaries(!showSyllableBoundaries)}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all border ${
+                    showSyllableBoundaries
+                      ? 'bg-rt-accent text-white border-rt-accent'
+                      : 'bg-rt-input text-rt-muted border-rt-border hover:text-rt-text'
+                  }`}
+                  title={showSyllableBoundaries ? 'Hide syllable boundaries' : 'Show syllable boundaries'}
+                >
+                  <span className="text-[11px]">.</span>
+                  <span className="hidden sm:inline">{showSyllableBoundaries ? 'Syllables On' : 'Syllables Off'}</span>
+                  <span className="sm:hidden">{showSyllableBoundaries ? 'On' : 'Off'}</span>
+                </button>
+              </div>
+            )}
           </h2>
           
           {error && (
@@ -274,7 +440,7 @@ export default function SoundChangeApplier() {
                 {outputWords.map((word, index) => (
                   <li key={index} className="font-mono text-base sm:text-xl text-rt-text flex items-center gap-2 sm:gap-4">
                     <span className="text-rt-muted text-[10px] font-black w-6 sm:w-8 text-right uppercase tracking-widest">{index + 1}.</span>
-                    <span className="ipa-font">{word}</span>
+                    <span className="ipa-font">{showSyllableBoundaries && word.syllabified ? word.syllabified : word.final}</span>
                   </li>
                 ))}
               </ul>

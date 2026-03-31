@@ -25,8 +25,38 @@ export interface BlendedScaResult {
 
 export interface ScaError {
   line: number;
+  column?: number;
   message: string;
-  type: 'syntax' | 'reference' | 'phonetic';
+  type: 'syntax' | 'reference' | 'phonetic' | 'warning';
+  severity: 'error' | 'warning' | 'info';
+  snippet?: string;
+  suggestion?: string;
+}
+
+// New Stress Configuration Interface
+export interface StressConfig {
+  pattern: 'initial' | 'final' | 'penultimate' | 'antepenult' | 'trochaic' | 'iambic' | 'dactylic' | 'anapestic' | 'mobile' | 'random-mobile' | 'custom' | null;
+  autoFix: boolean;
+  enforceSafety: boolean;
+  heavySyllablePattern: string;
+  customPosition: string;
+  randomMobile: {
+    enabled: boolean;
+    fallbackDirection: 'next' | 'previous';
+    seed: number | null;
+  };
+  secondaryStress: {
+    enabled: boolean;
+    pattern: 'alternating' | 'custom';
+    direction: 'ltr' | 'rtl';
+    skipPrimary: boolean;
+    customInterval?: number; // for custom alternating patterns (e.g., every 3rd syllable)
+  };
+  userAdjustments: Array<{
+    word: string;
+    syllableIndex: number;
+    stressType: 'primary' | 'secondary' | 'none';
+  }>;
 }
 
 interface RuleOptions {
@@ -270,10 +300,9 @@ class Rule {
         return full;
       });
 
-      // Handle subscripts C1, C₁
-      res = res.replace(/([A-Z@ᴰ]\w*)([1-9₁-₉])/g, (_, name, sub) => {
-        const n = sub.replace(/[₁-₉]/g, (c: string) => String.fromCharCode(c.charCodeAt(0) - 0x2080 + 0x30));
-        const key = `${name}${n}`;
+      // Handle subscripts C[1], C[2], etc. (zero-ambiguity syntax)
+      res = res.replace(/([A-Z@ᴰ]\w*)\[(\d+)\]/g, (_, name, sub) => {
+        const key = `${name}[${sub}]`;
         if (subscriptMap[key]) {
           return `\\k<${subscriptMap[key]}>`;
         } else {
@@ -287,10 +316,10 @@ class Rule {
         }
       });
 
-      // Handle feature variables [@place] and [@place +constraint]
+      // Handle feature variables [%place] and [%place +constraint]
       // This captures the phoneme AND applies feature constraints
-      res = res.replace(/\[(@\w+)(?:\s+([+-]\w+(?:\s+[!+-]\w+)*))?\]/g, (_, varNameWithAt, featureStr) => {
-        const varName = varNameWithAt.slice(1); // Remove @
+      res = res.replace(/\[(%\w+)(?:\s+([!+-]\w+(?:\s+[!+-]\w+)*))?\]/g, (_, varNameWithPercent, featureStr) => {
+        const varName = varNameWithPercent.slice(1); // Remove %
         captureCount++;
         const groupName = `fvar${captureCount}`;
         featureVars[varName] = groupName;
@@ -332,7 +361,49 @@ class Rule {
       // Handle features [+feature] attached to something (e.g. S[+fortis], S1[+fortis])
       // or standalone [+feature]
       // Support negation: [+vowel !front] means +vowel AND NOT +front
+      // Also support stress features: [+primstrss], [+scndstrss], [+stress], [-stress]
       res = res.replace(/(@?\w+|{[^}]+}|\[[^\]]+\])?\[([!+-]\w+(?:\s+[!+-]\w+)*)\]/g, (full, base, featureStr) => {
+        // Check for stress-related features first
+        const hasPrimStress = featureStr.includes('+primstrss');
+        const hasScndStress = featureStr.includes('+scndstrss');
+        const hasStress = featureStr.includes('+stress');
+        const noPrimStress = featureStr.includes('-primstrss');
+        const noScndStress = featureStr.includes('-scndstrss');
+        const noStress = featureStr.includes('-stress');
+        
+        // If we have stress features, handle them specially
+        if (hasPrimStress || hasScndStress || hasStress || noPrimStress || noScndStress || noStress) {
+          // Remove stress features from featureStr to process remaining features normally
+          const remainingFeatures = featureStr
+            .split(/\s+/)
+            .filter((f: string) => !f.match(/^[+-]?(primstrss|scndstrss|stress)$/))
+            .join(' ');
+          
+          // Build stress pattern - matches a complete syllable with/without stress
+          // Use [^.]+ to ensure at least one character in the syllable
+          let stressPattern = '';
+          if (hasPrimStress) {
+            stressPattern = '(?:[^.]*ˈ[^.]*\.)';
+          } else if (hasScndStress) {
+            stressPattern = '(?:[^.]*ˌ[^.]*\.)';
+          } else if (hasStress) {
+            stressPattern = '(?:[^.]*[ˈˌ][^.]*\.)';
+          } else if (noPrimStress) {
+            stressPattern = '(?:[^.]*(?<!ˈ)[^.]*\.)';
+          } else if (noScndStress) {
+            stressPattern = '(?:[^.]*(?<!ˌ)[^.]*\.)';
+          } else if (noStress) {
+            stressPattern = '(?:[^.]*(?<![ˈˌ])[^.]*\.)';
+          }
+          
+          if (!remainingFeatures.trim()) {
+            // Only stress features, return the stress pattern directly
+            return stressPattern;
+          }
+          // Otherwise continue processing remaining features
+          featureStr = remainingFeatures;
+        }
+        
         const criteria: any = {};
         const negCriteria: any = {};
         featureStr.split(/\s+/).forEach((f: string) => {
@@ -404,6 +475,11 @@ class Rule {
       res = res.replace(/\bD\b/g, `(?:${this.engine.getClasses()['D'].map(escapeRegExp).join('|')})`);
       res = res.replace(/\bᴰ\b/g, `(?:${this.engine.getClasses()['ᴰ'].map(escapeRegExp).join('|')})`);
       res = res.replace(/\bX\b/g, `(?:${phonemePattern})`);
+      
+      // Stress metasymbol - matches primary or secondary stress
+      res = res.replace(/\bstress\b/g, `(?:[${stressMarks}])`);
+      res = res.replace(/\bprimary-stress\b/g, '(?:ˈ)');
+      res = res.replace(/\bsecondary-stress\b/g, '(?:ˌ)');
       
       // Handle user classes @Class
       res = res.replace(/@(\w+)/g, (_, name) => {
@@ -542,6 +618,11 @@ class Rule {
         res = res.replace(/\$/g, '(?:\\.|^|\\s)');
         res = res.replace(/\+/g, '(?:\\+)');
         res = res.replace(/σ/g, '(?:[^.]+)');
+        // Syllable-aware predicates in environments
+        res = res.replace(/\bheavy_/g, '(?:(?:[^.]*[ˈˌ][^.,]*VC[^.,]*|[^.]*[ˈˌ][^.,]*VV[^.,]*|[^.]*VC[ˈˌ][^.,]*|[^.]*VV[ˈˌ][^.,]*)\.)?');
+        res = res.replace(/\blight_/g, '(?:[^.]*[ˈˌ]?[^.,]*V[^.,]*\.)?');
+        res = res.replace(/\bstressed_/g, '(?:[^.]*[ˈˌ][^.,]*\.)?');
+        res = res.replace(/\bunstressed_/g, '(?:[^.]*(?<![ˈˌ])[^.,]*\.)?');
       } else {
         res = res.replace(/##/g, '(?:$|\\s+)');
         res = res.replace(/#/g, '$');
@@ -549,6 +630,11 @@ class Rule {
         res = res.replace(/\$/g, '(?:\\.|$|\\s)');
         res = res.replace(/\+/g, '(?:\\+)');
         res = res.replace(/σ/g, '(?:[^.]+)');
+        // Syllable-aware predicates in environments
+        res = res.replace(/_heavy\b/g, '(?:\.(?:[^.]*[ˈˌ][^.,]*VC[^.,]*|[^.]*[ˈˌ][^.,]*VV[^.,]*|[^.]*VC[ˈˌ][^.,]*|[^.]*VV[ˈˌ][^.,]*))?');
+        res = res.replace(/_light\b/g, '(?:\.[^.]*[ˈˌ]?[^.,]*V[^.,]*)?');
+        res = res.replace(/_stressed\b/g, '(?:\.[^.]*[ˈˌ][^.,]*)?');
+        res = res.replace(/_unstressed\b/g, '(?:\.[^.]*(?<![ˈˌ])[^.,]*)?');
       }
 
       return res;
@@ -650,11 +736,13 @@ class Rule {
       return rest + fullMatch;
     }
 
-    // Handle subscripts in replacement
+    // Handle subscripts in replacement (new C[1] syntax)
     for (const [key, groupName] of Object.entries(subscriptMap)) {
       const val = groups && groups[groupName];
       if (val !== undefined) {
-        const re = new RegExp(key.replace(/(\d+)/, (_, n) => `[${n}${String.fromCharCode(0x2080 + parseInt(n) - 1)}]`), 'g');
+        // key is like "C[1]", replace it in the replacement string
+        const escapedKey = key.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+        const re = new RegExp(escapedKey, 'g');
         result = result.replace(re, val);
       }
     }
@@ -702,6 +790,25 @@ class Rule {
   }
 }
 
+// ResyllabifyRule: Special rule that re-syllabifies words
+class ResyllabifyRule {
+  constructor(
+    public name: string,
+    private engine: BlendedScaEngine
+  ) {}
+
+  apply(word: string): string {
+    // Remove existing syllable boundaries and stress marks
+    const cleanWord = word.replace(/[.ˈˌ]/g, '');
+    // Re-syllabify using the engine's syllabification
+    const syllabified = this.engine.syllabify(cleanWord);
+    // Re-assign stress if pattern is configured
+    return this.engine.stressConfig.pattern 
+      ? this.engine.assignStress(syllabified, cleanWord) 
+      : syllabified;
+  }
+}
+
 export class BlendedScaEngine {
   private classes: Record<string, string[]> = {
     C: [], V: [], D: [], ᴰ: []
@@ -716,12 +823,29 @@ export class BlendedScaEngine {
   private cleanupRules: Rule[] = [];
   private activeCleanupRules: string[] = [];
   
-  // Stress configuration
-  private stressPattern: 'initial' | 'final' | 'penultimate' | 'antepenult' | 'trochaic' | 'iambic' | 'dactylic' | 'anapestic' | 'mobile' | 'custom' | null = null;
-  private stressAutoFix: boolean = false;
-  private heavySyllablePattern: string = 'VC';
-  private stressEnforceSafety: boolean = true;
-  private customStressPosition: string = '';
+  // Stress configuration - New Architecture
+  private stressConfig: StressConfig = {
+    pattern: null,
+    autoFix: false,
+    enforceSafety: true,
+    heavySyllablePattern: 'VC',
+    customPosition: '',
+    // Random mobile settings
+    randomMobile: {
+      enabled: false,
+      fallbackDirection: 'next', // 'next' or 'previous'
+      seed: null // for reproducible randomness
+    },
+    // Secondary stress settings
+    secondaryStress: {
+      enabled: false,
+      pattern: 'alternating', // 'alternating' or 'custom'
+      direction: 'ltr', // 'ltr' or 'rtl'
+      skipPrimary: true // skip the syllable with primary stress
+    },
+    // User stress adjustments
+    userAdjustments: [] as Array<{word: string; syllableIndex: number; stressType: 'primary' | 'secondary' | 'none'}>
+  };
 
   constructor() {
     this.initializeDefaultClasses();
@@ -758,16 +882,45 @@ export class BlendedScaEngine {
 
   public validate(script: string): ScaError[] {
     const errors: ScaError[] = [];
-    const lines = script.split('\n').map(l => l.trim());
+    
+    // Parse lines while preserving original line numbers and handling line numbering
+    const rawLines = script.split('\n');
+    const lines: { originalLineNum: number; content: string; raw: string }[] = [];
+    
+    for (let i = 0; i < rawLines.length; i++) {
+      const raw = rawLines[i];
+      
+      // Skip empty lines but track them
+      if (!raw || raw.match(/^\s*$/)) {
+        continue;
+      }
+      
+      // Skip comment lines
+      if (raw.match(/^\s*(\/\/|;|#)/)) {
+        continue;
+      }
+      
+      // Handle line numbering: "1. " or "1: " at start
+      let content = raw;
+      const lineNumMatch = raw.match(/^(\s*)(?:\d+[.:\)]\s+)?(.*)$/);
+      if (lineNumMatch) {
+        content = lineNumMatch[1] + lineNumMatch[2];
+      }
+      
+      lines.push({
+        originalLineNum: i + 1,
+        content: content.trim(),
+        raw: raw.trim()
+      });
+    }
     
     const definedClasses = new Set<string>();
     const definedElements = new Set<string>();
     const definedRules = new Set<string>();
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line || line.startsWith('//') || line.startsWith(';')) continue;
-
+      const { originalLineNum, content: line, raw } = lines[i];
+      
       let matched = false;
 
       // Class definition
@@ -776,7 +929,14 @@ export class BlendedScaEngine {
         if (match) {
           definedClasses.add(match[1]);
         } else {
-          errors.push({ line: i + 1, message: `Invalid Class declaration. Expected: Class Name {members} or Class Name [+features].`, type: 'syntax' });
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Invalid Class declaration. Expected: Class Name {members} or Class Name [+features].`, 
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Example: Class C {p, t, k} or Class V [+syllabic]'
+          });
         }
         matched = true;
         continue;
@@ -788,7 +948,14 @@ export class BlendedScaEngine {
         if (match) {
           definedElements.add(match[1]);
         } else {
-          errors.push({ line: i + 1, message: `Invalid Element declaration. Expected: Element name pattern.`, type: 'syntax' });
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Invalid Element declaration. Expected: Element name pattern.`, 
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Example: Element scluster s @stop'
+          });
         }
         matched = true;
         continue;
@@ -817,16 +984,30 @@ export class BlendedScaEngine {
       // IF / THEN
       if (line.startsWith('IF ')) {
         if (!line.match(/IF\s+(.+)\s+THEN\s+(.+)(?:\s+ELSE\s+(.+))?/)) {
-          errors.push({ line: i + 1, message: `Invalid IF/THEN statement. Expected: IF condition THEN rule [ELSE rule].`, type: 'syntax' });
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Invalid IF/THEN statement. Expected: IF condition THEN rule [ELSE rule].`, 
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Example: IF #a THEN a > o ELSE a > e'
+          });
         }
         matched = true;
         continue;
       }
 
-      // Then block
-      if (line.startsWith('Then')) {
-        if (!line.match(/^Then(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/)) {
-          errors.push({ line: i + 1, message: `Invalid Then block. Expected: Then [filter] [propagate|ltr|rtl]:`, type: 'syntax' });
+      // Next block
+      if (line.startsWith('Next')) {
+        if (!line.match(/^Next(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/)) {
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Invalid Next block. Expected: Next [filter] [propagate|ltr|rtl]:`, 
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Example: Next propagate:'
+          });
         }
         matched = true;
         continue;
@@ -836,9 +1017,23 @@ export class BlendedScaEngine {
       if (line.startsWith('Apply:')) {
         const ruleName = line.split(':')[1]?.trim();
         if (!ruleName) {
-          errors.push({ line: i + 1, message: `Invalid Apply statement. Expected: Apply: rule-name`, type: 'syntax' });
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Invalid Apply statement. Expected: Apply: rule-name`, 
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Example: Apply: nasal-assim'
+          });
         } else if (!definedRules.has(ruleName)) {
-          errors.push({ line: i + 1, message: `Reference error: Rule '${ruleName}' is applied but never defined.`, type: 'reference' });
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Reference error: Rule '${ruleName}' is applied but never defined.`, 
+            type: 'reference',
+            severity: 'error',
+            snippet: raw,
+            suggestion: `Define the rule first: ${ruleName}:`
+          });
         }
         matched = true;
         continue;
@@ -850,42 +1045,149 @@ export class BlendedScaEngine {
         continue;
       }
 
+      // Stress declarations
+      if (line.toLowerCase().startsWith('stress:')) {
+        const stressMatch = line.match(/^Stress:\s*(\w+)(?:\s+auto-fix)?(?:\s+heavy:(\S+))?(?:\s+pos:(\S+))?(?:\s+fallback:(next|previous))?(?:\s+secondary:(\w+))?(?:\s+2nd-dir:(ltr|rtl))?(?:\s+seed:(\d+))?/i);
+        if (!stressMatch) {
+          errors.push({
+            line: originalLineNum,
+            message: `Invalid Stress declaration`,
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Expected: Stress: pattern [auto-fix] [heavy:VC|VV] [pos:N] [fallback:next|previous] [secondary:alternating] [2nd-dir:ltr|rtl] [seed:N]'
+          });
+        }
+        matched = true;
+        continue;
+      }
+
+      // Python-style stress declarations
+      const newStressMatch = line.match(/^stress\s*=\s*["']([^"']+)["']/i);
+      if (newStressMatch) {
+        matched = true;
+        continue;
+      }
+
+      // SecondaryStress declarations (validation)
+      if (line.toLowerCase().startsWith('secondarystress:')) {
+        const secondaryMatch = line.match(/^SecondaryStress:\s*(on|off|alternating|custom)(?:\s+interval:(\d+))?(?:\s+dir:(ltr|rtl))?(?:\s+skip-primary)?/i);
+        if (!secondaryMatch) {
+          errors.push({
+            line: originalLineNum,
+            message: `Invalid SecondaryStress declaration`,
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Expected: SecondaryStress: on|off|alternating|custom [interval:N] [dir:ltr|rtl] [skip-primary]'
+          });
+        }
+        matched = true;
+        continue;
+      }
+      if (line.toLowerCase().startsWith('stressadjust:')) {
+        const adjustMatch = line.match(/^StressAdjust:\s*(\S+)\s+(\d+)\s+(primary|secondary|none)/i);
+        if (!adjustMatch) {
+          errors.push({
+            line: originalLineNum,
+            message: `Invalid StressAdjust declaration`,
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Expected: StressAdjust: word syllableIndex primary|secondary|none'
+          });
+        }
+        matched = true;
+        continue;
+      }
+
+      // Resyllabify declarations (validation)
+      if (line.toLowerCase().startsWith('resyllabify')) {
+        const resyllMatch = line.match(/^Resyllabify(?:\s*:\s*(\w+))?/i);
+        if (!resyllMatch) {
+          errors.push({
+            line: originalLineNum,
+            message: `Invalid Resyllabify declaration`,
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Expected: Resyllabify or Resyllabify: name'
+          });
+        }
+        matched = true;
+        continue;
+      }
+
       // Sound change rule (contains arrow)
       const arrowRegex = /(?:=>|->|→|>)/;
       if (arrowRegex.test(line)) {
         matched = true;
         const parts = line.split(arrowRegex);
         if (parts.length < 2 || !parts[1].trim()) {
-          errors.push({ line: i + 1, message: `Invalid rule format. Missing replacement after arrow.`, type: 'syntax' });
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Invalid rule format. Missing replacement after arrow.`, 
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Example: a > o or k > g / V_V'
+          });
           continue;
         }
         
         const target = parts[0].trim();
         if (!target) {
-          errors.push({ line: i + 1, message: `Invalid rule format. Missing target before arrow.`, type: 'syntax' });
+          errors.push({ 
+            line: originalLineNum, 
+            message: `Invalid rule format. Missing target before arrow.`, 
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Add a target sound before the >'
+          });
         }
 
         // Check for undefined classes/elements in target and replacement
-        // Exclude feature variables like [@place] - only match @ClassName not inside []
         const classMatches = line.match(/(?<!\[)@(\w+)/g);
         if (classMatches) {
           classMatches.forEach(m => {
             const name = m.slice(1);
             if (!definedClasses.has(name) && !definedElements.has(name)) {
-              errors.push({ line: i + 1, message: `Reference error: Class or Element '${name}' is used but never defined.`, type: 'reference' });
+              errors.push({ 
+                line: originalLineNum, 
+                message: `Reference error: Class or Element '${name}' is used but never defined.`, 
+                type: 'reference',
+                severity: 'error',
+                snippet: raw,
+                suggestion: `Define it first: Class ${name} {...} or Element ${name} ...`
+              });
             }
           });
         }
         
         // Check for phonetic impossibilities in rules
-        const featureMatches = line.match(/\[([+-]\w+(?:\s+[+-]\w+)*)\]/g);
+        const featureMatches = line.match(/\[([!+-]\w+(?:\s+[!+-]\w+)*)\]/g);
         if (featureMatches) {
           featureMatches.forEach(fm => {
             if (fm.includes('+high') && fm.includes('+low')) {
-              errors.push({ line: i + 1, message: `Phonetic impossibility: [+high] and [+low] cannot co-occur.`, type: 'phonetic' });
+              errors.push({ 
+                line: originalLineNum, 
+                message: `Phonetic impossibility: [+high] and [+low] cannot co-occur.`, 
+                type: 'phonetic',
+                severity: 'warning',
+                snippet: raw,
+                suggestion: 'Use either [+high] or [+low], not both'
+              });
             }
             if (fm.includes('+front') && fm.includes('+back')) {
-              errors.push({ line: i + 1, message: `Phonetic impossibility: [+front] and [+back] cannot co-occur.`, type: 'phonetic' });
+              errors.push({ 
+                line: originalLineNum, 
+                message: `Phonetic impossibility: [+front] and [+back] cannot co-occur.`, 
+                type: 'phonetic',
+                severity: 'warning',
+                snippet: raw,
+                suggestion: 'Use either [+front] or [+back], not both'
+              });
             }
           });
         }
@@ -894,7 +1196,14 @@ export class BlendedScaEngine {
       }
 
       if (!matched) {
-        errors.push({ line: i + 1, message: `Unrecognized syntax or invalid statement.`, type: 'syntax' });
+        errors.push({ 
+          line: originalLineNum, 
+          message: `Unrecognized syntax or invalid statement.`, 
+          type: 'syntax',
+          severity: 'error',
+          snippet: raw,
+          suggestion: 'Check the Syntax Guide for valid statement types'
+        });
       }
     }
     
@@ -1036,40 +1345,120 @@ export class BlendedScaEngine {
     }
   }
 
-  public parse(script: string) {
-    const lines = script.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//') && !l.startsWith(';'));
+  public parse(script: string): ScaError[] {
+    const errors: ScaError[] = [];
+    
+    // ─── RESET state so re-parses start clean ───────────────────────────────────
+    this.rules = [];
+    this.syllables = [];
+    this.stressConfig = {
+      pattern: null,
+      autoFix: false,
+      enforceSafety: true,
+      heavySyllablePattern: 'VC',
+      customPosition: '',
+      randomMobile: { enabled: false, fallbackDirection: 'next', seed: null },
+      secondaryStress: {
+        enabled: false,
+        pattern: 'alternating',
+        direction: 'ltr',
+        skipPrimary: true,
+      },
+      userAdjustments: [],
+    };
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // Preprocessing: Handle both old and new syntax
+    // New syntax: class C = ["p", "t", "k"]
+    // New syntax: def rule_name(): with indentation
+    // New syntax: a = o if _V (assignment with if)
+    
+    // Support Lua-style -- comments only
+    let normalizedScript = script
+      .replace(/^\s*--\s*/gm, '; ');  // Convert -- comments to ;
+    
+    // Convert new assignment syntax to old arrow syntax for processing
+    // a = o if _V  =>  a > o / _V
+    // a = o        =>  a > o
+    normalizedScript = this.convertNewSyntaxToOld(normalizedScript);
+    
+    // Normalize arrows for zero-ambiguity
+    normalizedScript = normalizedScript
+      .replace(/\s*=>\s*/g, ' > ')
+      .replace(/\s*->\s*/g, ' > ')
+      .replace(/\s*→\s*/g, ' > ');
+    
+    // Parse lines with indentation tracking
+    const rawLines = normalizedScript.split('\n');
+    const lines: { originalLineNum: number; content: string; indent: number; raw: string }[] = [];
+    
+    for (let i = 0; i < rawLines.length; i++) {
+      const raw = rawLines[i];
+      
+      if (!raw || raw.match(/^\s*$/)) continue;
+      if (raw.match(/^\s*(\/\/|;)/)) continue;
+      
+      // Handle line numbering: "1. " or "1: " at start
+      let content = raw;
+      const lineNumMatch = raw.match(/^(\s*)(?:\d+[.:\)]\s+)?(.*)$/);
+      if (lineNumMatch) {
+        content = lineNumMatch[1] + lineNumMatch[2];
+      }
+      
+      // Calculate indentation (tabs = 2 spaces)
+      const leadingWhitespace = content.match(/^(\s*)/)?.[1] || '';
+      const indent = leadingWhitespace.replace(/\t/g, '  ').length;
+      
+      lines.push({
+        originalLineNum: i + 1,
+        content: content.trim(),
+        indent,
+        raw: raw.trim()
+      });
+    }
     
     let currentRule: Rule | null = null;
     let mode: 'rules' | 'deromanizer' | 'romanizer' | 'deferred' | 'cleanup' = 'rules';
+    let lastRuleIndent = 0;
+    let blockStack: { rule: Rule; indent: number }[] = [];
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // Handle IF/THEN/ELSE
-      if (line.startsWith('IF ')) {
-        const match = line.match(/IF\s+(.+?)\s+THEN\s+(.+?)(?:\s+ELSE\s+(.+))?$/);
-        if (match) {
-          const condition = match[1].trim();
-          const thenPart = match[2].trim();
-          const elsePart = match[3] ? match[3].trim() : null;
-
-          const r = new Rule('conditional', {}, this);
-          r.setCondition(condition);
+      const { originalLineNum, content: line, indent, raw } = lines[i];
+      
+      // Handle exiting blocks based on indentation (Python-style)
+      while (blockStack.length > 0 && indent <= blockStack[blockStack.length - 1].indent) {
+        blockStack.pop();
+        currentRule = blockStack.length > 0 ? blockStack[blockStack.length - 1].rule : null;
+      }
+      
+      // New Python-style: class Name = [...] or class Name = [+features]
+      const newClassMatch = line.match(/^class\s+(\w+)\s*=\s*(.+)$/);
+      if (newClassMatch) {
+        const name = newClassMatch[1];
+        const value = newClassMatch[2].trim();
+        
+        if (value.startsWith('[') && value.endsWith(']')) {
+          const inner = value.slice(1, -1).trim();
           
-          this.parseSubRuleLine(r, thenPart, false);
-          if (elsePart) {
-            if (elsePart.startsWith('IF ')) {
-              this.rules.push(r);
-              lines.splice(i + 1, 0, elsePart);
-              continue;
-            } else {
-              this.parseSubRuleLine(r, elsePart, true);
-            }
+          // Feature-based class: [+syllabic -consonantal]
+          if (inner.match(/^[\+\-]/)) {
+            const criteria: any = {};
+            inner.split(/\s+/).forEach((f: string) => {
+              if (f.startsWith('+') || f.startsWith('-')) {
+                criteria[f.slice(1)] = f.startsWith('+');
+              }
+            });
+            this.classes[name] = getPhonemesByFeatures(criteria);
+          } else {
+            // Member list: ["p", "t", "k"] or [p, t, k]
+            const vals = inner.split(/,\s*/).map(s => s.trim().replace(/["']/g, ''));
+            this.classes[name] = vals;
           }
-          this.rules.push(r);
         }
         continue;
       }
-
+      
+      // Old style: Class Name {...} or Class Name [...]
       if (line.startsWith('Class ')) {
         const match = line.match(/Class\s+(\w+)\s+(?:\{([^}]+)\}|\[([^\]]+)\])/);
         if (match) {
@@ -1087,7 +1476,25 @@ export class BlendedScaEngine {
             });
             this.classes[name] = getPhonemesByFeatures(criteria);
           }
+        } else {
+          errors.push({
+            line: originalLineNum,
+            message: `Invalid Class declaration`,
+            type: 'syntax',
+            severity: 'error',
+            snippet: raw,
+            suggestion: 'Expected: Class Name {members} or class Name = [members]'
+          });
         }
+        continue;
+      }
+
+      // New Python-style: def element(name, pattern)
+      const newElementMatch = line.match(/^def\s+element\s*\(\s*(\w+)\s*,\s*["'](.+?)["']\s*\)$/);
+      if (newElementMatch) {
+        const name = newElementMatch[1];
+        const pattern = newElementMatch[2];
+        this.elements[name] = pattern;
         continue;
       }
 
@@ -1101,49 +1508,142 @@ export class BlendedScaEngine {
         continue;
       }
 
-      if (line.toLowerCase().startsWith('syllables:')) {
-        const pattern = line.split(':')[1].trim();
+      // New Python-style: syllables = "..."
+      const newSyllablesMatch = line.match(/^syllables\s*=\s*["'](.+?)["']$/);
+      if (newSyllablesMatch) {
+        const pattern = newSyllablesMatch[1];
         this.syllables = pattern.split(/\s+/).filter(p => p);
         continue;
       }
 
-      if (line.toLowerCase().startsWith('stress:')) {
-        const stressMatch = line.match(/^Stress:\s*(\w+)(?:\s+auto-fix)?(?:\s+heavy:(\S+))?(?:\s+pos:(\S+))?/i);
-        if (stressMatch) {
-          this.stressPattern = stressMatch[1].toLowerCase() as any;
-          this.stressAutoFix = line.toLowerCase().includes('auto-fix');
-          this.heavySyllablePattern = stressMatch[2] || 'VC';
-          this.customStressPosition = stressMatch[3] || '';
+      if (line.toLowerCase().startsWith('syllables:')) {
+        const pattern = line.split(':')[1]?.trim();
+        if (pattern) {
+          this.syllables = pattern.split(/\s+/).filter(p => p);
         }
         continue;
       }
 
+      // New Python-style: stress = "pattern" with extended options
+      // stress = "random-mobile" fallback:next secondary:alternating
+      const newStressMatch = line.match(/^stress\s*=\s*["']([^"']+)["'](?:\s+fallback:(next|previous))?(?:\s+secondary:(\w+))?(?:\s+seed:(\d+))?/i);
+      if (newStressMatch) {
+        this.stressConfig.pattern = newStressMatch[1].toLowerCase() as any;
+        if (newStressMatch[2]) {
+          this.stressConfig.randomMobile.fallbackDirection = newStressMatch[2] as 'next' | 'previous';
+        }
+        if (newStressMatch[3]) {
+          this.stressConfig.secondaryStress.enabled = true;
+          this.stressConfig.secondaryStress.pattern = newStressMatch[3] as 'alternating' | 'custom';
+        }
+        if (newStressMatch[4]) {
+          this.stressConfig.randomMobile.seed = parseInt(newStressMatch[4], 10);
+        }
+        continue;
+      }
+
+      // Classic syntax: Stress: pattern [options]
+      if (line.toLowerCase().startsWith('stress:')) {
+        const stressMatch = line.match(/^Stress:\s*(\w+)(?:\s+auto-fix)?(?:\s+heavy:(\S+))?(?:\s+pos:(\S+))?(?:\s+fallback:(next|previous))?(?:\s+secondary:(\w+))?(?:\s+2nd-dir:(ltr|rtl))?(?:\s+seed:(\d+))?/i);
+        if (stressMatch) {
+          this.stressConfig.pattern = stressMatch[1].toLowerCase() as any;
+          this.stressConfig.autoFix = line.toLowerCase().includes('auto-fix');
+          this.stressConfig.heavySyllablePattern = stressMatch[2] || 'VC';
+          this.stressConfig.customPosition = stressMatch[3] || '';
+          if (stressMatch[4]) {
+            this.stressConfig.randomMobile.fallbackDirection = stressMatch[4] as 'next' | 'previous';
+          }
+          if (stressMatch[5]) {
+            this.stressConfig.secondaryStress.enabled = true;
+            this.stressConfig.secondaryStress.pattern = stressMatch[5] as 'alternating' | 'custom';
+          }
+          if (stressMatch[6]) {
+            this.stressConfig.secondaryStress.direction = stressMatch[6] as 'ltr' | 'rtl';
+          }
+          if (stressMatch[7]) {
+            this.stressConfig.randomMobile.seed = parseInt(stressMatch[7], 10);
+          }
+        }
+        continue;
+      }
+
+      // SecondaryStress declarations - standalone secondary stress configuration
+      if (line.toLowerCase().startsWith('secondarystress:')) {
+        const secondaryMatch = line.match(/^SecondaryStress:\s*(on|off|alternating|custom)(?:\s+interval:(\d+))?(?:\s+dir:(ltr|rtl))?(?:\s+skip-primary)?/i);
+        if (secondaryMatch) {
+          this.stressConfig.secondaryStress.enabled = secondaryMatch[1].toLowerCase() !== 'off';
+          if (secondaryMatch[1].toLowerCase() === 'alternating') {
+            this.stressConfig.secondaryStress.pattern = 'alternating';
+            this.stressConfig.secondaryStress.interval = 2; // Default binary alternating
+          } else if (secondaryMatch[1].toLowerCase() === 'custom') {
+            this.stressConfig.secondaryStress.pattern = 'custom';
+          }
+          if (secondaryMatch[2]) {
+            this.stressConfig.secondaryStress.interval = parseInt(secondaryMatch[2], 10);
+          }
+          if (secondaryMatch[3]) {
+            this.stressConfig.secondaryStress.direction = secondaryMatch[3] as 'ltr' | 'rtl';
+          }
+          this.stressConfig.secondaryStress.skipPrimary = line.toLowerCase().includes('skip-primary');
+        }
+        continue;
+      }
+      if (line.toLowerCase().startsWith('stressadjust:')) {
+        const adjustMatch = line.match(/^StressAdjust:\s*(\S+)\s+(\d+)\s+(primary|secondary|none)/i);
+        if (adjustMatch) {
+          this.stressConfig.userAdjustments.push({
+            word: adjustMatch[1],
+            syllableIndex: parseInt(adjustMatch[2], 10),
+            stressType: adjustMatch[3] as 'primary' | 'secondary' | 'none'
+          });
+        }
+        continue;
+      }
+
+      // New Python-style: def romanizer(): or def deromanizer():
+      const newRomanizerMatch = line.match(/^def\s+(romanizer|deromanizer)\s*\(\s*(\w+)?\s*\)\s*:/);
+      if (newRomanizerMatch) {
+        const type = newRomanizerMatch[1];
+        const name = newRomanizerMatch[2];
+        
+        if (type === 'deromanizer') {
+          this.deromanizer = new Rule('Deromanizer', {}, this);
+          currentRule = this.deromanizer;
+          mode = 'deromanizer';
+        } else {
+          if (name) {
+            const r = new Rule(`Romanizer-${name}`, {}, this);
+            this.intermediateRomanizers[name] = r;
+            currentRule = r;
+          } else {
+            this.romanizer = new Rule('Romanizer', {}, this);
+            currentRule = this.romanizer;
+          }
+          mode = 'romanizer';
+        }
+        blockStack.push({ rule: currentRule!, indent });
+        continue;
+      }
+
       if (line.startsWith('Deromanizer')) {
-        // Check for 'literal' modifier
-        const isLiteral = line.includes('literal');
         this.deromanizer = new Rule('Deromanizer', {}, this);
-        (this.deromanizer as any).literal = isLiteral;
         currentRule = this.deromanizer;
         mode = 'deromanizer';
         continue;
       }
 
       if (line.startsWith('Romanizer')) {
-        // Check for 'literal' modifier
-        const isLiteral = line.includes('literal');
         if (line.startsWith('Romanizer-')) {
           const match = line.match(/Romanizer-([\w-]+):/);
           if (match) {
             const name = match[1];
             const r = new Rule(`Romanizer-${name}`, {}, this);
-            (r as any).literal = isLiteral;
             this.intermediateRomanizers[name] = r;
             currentRule = r;
             mode = 'romanizer';
           }
         } else {
           this.romanizer = new Rule('Romanizer', {}, this);
-          (this.romanizer as any).literal = isLiteral;
           currentRule = this.romanizer;
           mode = 'romanizer';
         }
@@ -1157,54 +1657,67 @@ export class BlendedScaEngine {
       }
 
       if (line.startsWith('Cleanup:')) {
-        // Check for off toggle: "Cleanup name: off" or "Cleanup: off"
-        const offMatch = line.match(/Cleanup(?:\s+(\w+))?:\s*off/i);
-        if (offMatch) {
-          const ruleName = offMatch[1];
-          if (ruleName) {
-            // Deactivate specific cleanup rule
-            this.activeCleanupRules = this.activeCleanupRules.filter(n => n !== ruleName);
-          } else {
-            // Deactivate all cleanup rules
-            this.activeCleanupRules = [];
-          }
-          mode = 'rules'; // Reset mode
-          currentRule = null;
+        mode = 'cleanup';
+        continue;
+      }
+
+      // New Python-style: def rule_name([filter], [propagate|ltr|rtl]):
+      const newRuleMatch = line.match(/^def\s+([\w_]+)\s*\(\s*(\[[^\]]+\])?\s*(propagate|ltr|rtl)?\s*\)\s*:/);
+      if (newRuleMatch) {
+        const name = newRuleMatch[1];
+        const filter = newRuleMatch[2] ? newRuleMatch[2].slice(1, -1) : undefined;
+        const directive = newRuleMatch[3] as 'propagate' | 'ltr' | 'rtl' | undefined;
+        
+        const opts: RuleOptions = { name };
+        if (directive === 'propagate') opts.propagate = true;
+        if (directive === 'ltr' || directive === 'rtl') opts.direction = directive;
+        if (filter) opts.filter = filter;
+
+        const r = new Rule(name, opts, this);
+        
+        if (mode === 'deferred') {
+          this.deferredRules[name] = r;
+        } else if (mode === 'cleanup') {
+          this.cleanupRules.push(r);
         } else {
-          mode = 'cleanup';
+          this.rules.push(r);
         }
+        currentRule = r;
+        lastRuleIndent = indent;
+        blockStack.push({ rule: r, indent });
         continue;
       }
 
-      if (line.match(/^[\w-]+(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/)) {
-        const match = line.match(/^([\w-]+)(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
-        if (match) {
-          const name = match[1];
-          const filter = match[2] || undefined;
-          const directive = match[3] as 'propagate' | 'ltr' | 'rtl' | undefined;
-          
-          const opts: RuleOptions = { name };
-          if (directive === 'propagate') opts.propagate = true;
-          if (directive === 'ltr' || directive === 'rtl') opts.direction = directive;
-          if (filter) opts.filter = filter;
+      // Old style rule name declaration
+      const nameMatch = line.match(/^([\w-]+)(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
+      if (nameMatch && !line.includes('>')) {
+        const name = nameMatch[1];
+        const filter = nameMatch[2] || undefined;
+        const directive = nameMatch[3] as 'propagate' | 'ltr' | 'rtl' | undefined;
+        
+        const opts: RuleOptions = { name };
+        if (directive === 'propagate') opts.propagate = true;
+        if (directive === 'ltr' || directive === 'rtl') opts.direction = directive;
+        if (filter) opts.filter = filter;
 
-          const r = new Rule(name, opts, this);
-          
-          if (mode === 'deferred') {
-            this.deferredRules[name] = r;
-          } else if (mode === 'cleanup') {
-            this.cleanupRules.push(r);
-          } else {
-            this.rules.push(r);
-          }
-          currentRule = r;
+        const r = new Rule(name, opts, this);
+        
+        if (mode === 'deferred') {
+          this.deferredRules[name] = r;
+        } else if (mode === 'cleanup') {
+          this.cleanupRules.push(r);
+        } else {
+          this.rules.push(r);
         }
+        currentRule = r;
+        lastRuleIndent = indent;
         continue;
       }
 
-      if (line.startsWith('Then')) {
+      // Handle Next: blocks (old style)
+      if (line.startsWith('Next')) {
         if (currentRule) {
-          const match = line.match(/^Then(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
+          const match = line.match(/^Next(?:\s+\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
           if (match) {
             const filter = match[1] || undefined;
             const directive = match[2] as 'propagate' | 'ltr' | 'rtl' | undefined;
@@ -1221,103 +1734,106 @@ export class BlendedScaEngine {
       }
 
       if (line.startsWith('Apply:')) {
-        const ruleName = line.split(':')[1].trim();
-        if (currentRule && mode !== 'deferred') {
+        const ruleName = line.split(':')[1]?.trim();
+        if (ruleName && currentRule && mode !== 'deferred') {
           this.activeCleanupRules.push(ruleName);
         }
         continue;
       }
 
-      /**
-       * Feature 5.5: Chain Shift Shorthand
-       * Parse chain blocks: chain [name]: ... end
-       * Supports >> chaining syntax: iː >> əɪ >> aɪ
-       */
+      // Resyllabify: explicit re-syllabification rule
+      if (line.toLowerCase().startsWith('resyllabify')) {
+        const resyllMatch = line.match(/^Resyllabify(?:\s*:\s*(\w+))?/i);
+        if (resyllMatch) {
+          const name = resyllMatch[1] || 'Resyllabify';
+          const resyllRule = new ResyllabifyRule(name, this);
+          this.rules.push(resyllRule);
+        }
+        continue;
+      }
+
+      // Chain shift blocks (old style)
       const chainMatch = line.match(/^chain(?:\s*\((\w+)\))?\s*([\w-]+)?:/);
       if (chainMatch) {
         const chainType = (chainMatch[1] || 'drag') as 'drag' | 'push';
         const chainName = chainMatch[2] || 'chain-shift';
         
-        // Collect all lines until we hit a terminator (blank line, end, or new section)
         const chainLines: string[] = [];
         let j = i + 1;
         while (j < lines.length) {
-          const chainLine = lines[j].trim();
-          if (chainLine === '' || chainLine === 'end' || chainLine.startsWith('chain') || 
-              chainLine.startsWith('rule ') || chainLine.startsWith('Class:') ||
-              chainLine.startsWith('Syllables:') || chainLine.startsWith('Deromanizer:') ||
-              chainLine.startsWith('Romanizer:')) {
+          const nextLine = lines[j];
+          if (nextLine.content === '' || nextLine.content === 'end' || 
+              nextLine.content.startsWith('chain') || 
+              nextLine.content.startsWith('rule ') || 
+              nextLine.content.startsWith('Class:') ||
+              nextLine.content.startsWith('Syllables:') || 
+              nextLine.content.startsWith('Deromanizer:') ||
+              nextLine.content.startsWith('Romanizer:')) {
             break;
           }
-          if (chainLine.includes('>>')) {
-            chainLines.push(chainLine);
+          if (nextLine.content.includes('>>')) {
+            chainLines.push(nextLine.content);
           }
           j++;
         }
         
-        // Parse chain shifts and expand into Then: stages
         if (chainLines.length > 0) {
           this.parseChainShift(chainName, chainLines, chainType, mode);
         }
         
-        i = j - 1; // Skip processed lines
+        i = j - 1;
         continue;
       }
 
-      // Handle block syntax: [block] ... [end]
+      // Block syntax: [block] ... [end]
       if (line === '[block]') {
-        // Collect all lines until [end]
         const blockLines: string[] = [];
         let j = i + 1;
         while (j < lines.length) {
-          const blockLine = lines[j].trim();
-          if (blockLine === '[end]') break;
-          if (blockLine && !blockLine.startsWith('//') && !blockLine.startsWith(';')) {
-            blockLines.push(blockLine);
+          const nextLine = lines[j];
+          if (nextLine.content === '[end]') break;
+          if (nextLine.content && !nextLine.content.startsWith('//') && !nextLine.content.startsWith(';')) {
+            blockLines.push(nextLine.content);
           }
           j++;
         }
         
-        // Create a rule with propagate mode for the block
         if (blockLines.length > 0) {
           const blockRule = new Rule('block', { propagate: true }, this);
           for (const blockLine of blockLines) {
-            this.parseSubRuleLine(blockRule, blockLine, false);
+            this.parseSubRuleLineWithErrors(blockRule, blockLine, false, originalLineNum, errors);
           }
           this.rules.push(blockRule);
         }
         
-        i = j; // Skip to [end] line
+        i = j;
         continue;
       }
 
-      // Handle "except" for exception lists: rule except word1 word2
+      // Exception lists
       const exceptMatch = line.match(/(.+)\s+except\s+(.+)/i);
       if (exceptMatch && line.includes('>')) {
         const rulePart = exceptMatch[1].trim();
         const exceptionWords = exceptMatch[2].trim().split(/\s+/);
         
-        // Parse the rule part normally but add exception words
-        // We'll store exceptions in a way the rule can access
         const r = currentRule || new Rule('unnamed', {}, this);
         (r as any).exceptionWords = exceptionWords;
         
         if (!currentRule) {
-          this.parseSubRuleLine(r, rulePart, false);
+          this.parseSubRuleLineWithErrors(r, rulePart, false, originalLineNum, errors);
           this.rules.push(r);
         } else {
-          this.parseSubRuleLine(r, rulePart, false);
+          this.parseSubRuleLineWithErrors(r, rulePart, false, originalLineNum, errors);
         }
         continue;
       }
 
-      // Handle custom segment definitions: feat: x = +f1 -f2
+      // Custom segment definitions
       const featMatch = line.match(/^feat:\s*(\S+)\s*=\s*(.+)/i);
       if (featMatch) {
         const symbol = featMatch[1];
         const featureSpec = featMatch[2].trim();
         
-        // Parse feature specification
         const criteria: any = {};
         featureSpec.split(/\s+/).forEach((f: string) => {
           if (f.startsWith('+') || f.startsWith('-')) {
@@ -1325,21 +1841,14 @@ export class BlendedScaEngine {
           }
         });
         
-        // If it's a digraph (multi-character), we need to add it to FEATURE_MAP
-        // For now, add it as a custom class entry
         if (symbol.length > 1) {
-          // It's a digraph - add to a special digraphs class
           if (!this.classes['digraphs']) {
             this.classes['digraphs'] = [];
           }
           this.classes['digraphs'].push(symbol);
-          
-          // Store features for the digraph
           (this as any).customFeatures = (this as any).customFeatures || {};
           (this as any).customFeatures[symbol] = criteria;
         } else {
-          // Single character - add as alias to existing or custom
-          // For now, add to custom class
           if (!this.classes['custom']) {
             this.classes['custom'] = [];
           }
@@ -1350,19 +1859,84 @@ export class BlendedScaEngine {
         continue;
       }
 
-      if (line.includes('>') || line.includes('=>') || line.includes('->') || line.includes('→')) {
+      // Sound change rules with arrows (already converted from new syntax)
+      if (line.includes('>')) {
         if (currentRule) {
-          this.parseSubRuleLine(currentRule, line, false);
+          this.parseSubRuleLineWithErrors(currentRule, line, false, originalLineNum, errors);
         } else if (mode === 'rules') {
           const r = new Rule('unnamed', {}, this);
-          this.parseSubRuleLine(r, line, false);
+          this.parseSubRuleLineWithErrors(r, line, false, originalLineNum, errors);
           this.rules.push(r);
         }
+        continue;
       }
+      
+      // If we get here, line wasn't recognized
+      errors.push({
+        line: originalLineNum,
+        message: `Unrecognized syntax`,
+        type: 'syntax',
+        severity: 'error',
+        snippet: raw,
+        suggestion: 'Check the syntax guide for valid statement types'
+      });
     }
+    
+    return errors;
   }
-
-  private parseSubRuleLine(rule: Rule, line: string, isElse: boolean) {
+  
+  /**
+   * Convert Python/Lua-inspired new syntax to old classic syntax
+   * 
+   * Converts:
+   * - stress = "pattern" => Stress: pattern
+   * - syllables = "structure" => Syllables: structure
+   * - class C = ["p", "t"] => Class C {p, t}
+   * - def element(name, "pattern") => Element name pattern
+   * - def rule(): => rule:
+   * - def deromanizer(): => Deromanizer:
+   * - def romanizer(): => Romanizer:
+   * - def romanizer(name): => Romanizer-name:
+   * - a = o if _V  =>  a > o / _V
+   * - a = o        =>  a > o
+   */
+  private convertNewSyntaxToOld(script: string): string {
+    return script
+      // Convert stress declarations with extended options
+      .replace(
+        /stress\s*=\s*"([^"]+)"(?:\s+fallback:(next|previous))?(?:\s+secondary:(\w+))?(?:\s+2nd-dir:(ltr|rtl))?(?:\s+seed:(\d+))?/gm,
+        (_match, pattern, fallback, secondary, dir, seed) => {
+          let result = `Stress: ${pattern}`;
+          if (fallback)  result += ` fallback:${fallback}`;
+          if (secondary) result += ` secondary:${secondary}`;
+          if (dir)       result += ` 2nd-dir:${dir}`;
+          if (seed)      result += ` seed:${seed}`;
+          return result;
+        }
+      )
+      // Convert syllables declarations  
+      .replace(/syllables\s*=\s*"([^"]+)"/gm, 'Syllables: $1')
+      // Convert class declarations
+      .replace(/class\s+(\w+)\s*=\s*\[([^\]]+)\]/gm, 'Class $1 {$2}')
+      // Convert element declarations
+      .replace(/def\s+element\s*\(\s*(\w+)\s*,\s*"([^"]+)"\s*\)/gm, 'Element $1 $2')
+      // Convert def rule declarations
+      .replace(/def\s+(\w[\w-]*)\s*\(\s*([^\)]*)\s*\)\s*:/gm, '$1$2:')
+      // Convert def deromanizer
+      .replace(/def\s+deromanizer\s*\(\s*\)\s*:/gm, 'Deromanizer:')
+      // Convert def romanizer
+      .replace(/def\s+romanizer\s*\(\s*(\w*)\s*\)\s*:/gm, (match, name) => 
+        name ? `Romanizer-${name}:` : 'Romanizer:'
+      )
+      // Convert Python-style user stress adjustments
+      .replace(/stress\s+adjust\s+(\w+)\s+(\d+)\s+(primary|secondary|none)/gm, 'StressAdjust: $1 $2 $3')
+      // Convert assignment-style rules with if
+      .replace(/(\S+)\s*=\s*(\S+)\s+if\s+(.+)$/gm, '$1 > $2 / $3')
+      // Convert assignment-style rules without if
+      .replace(/(\S+)\s*=\s*(\S+)$/gm, '$1 > $2');
+  }
+  
+  private parseSubRuleLineWithErrors(rule: Rule, line: string, isElse: boolean, lineNum: number, errors: ScaError[]) {
     const arrows = ['=>', '->', '→', '>'];
     let arrow = '';
     for (const a of arrows) {
@@ -1371,22 +1945,55 @@ export class BlendedScaEngine {
         break;
       }
     }
-    if (!arrow) return;
+    if (!arrow) {
+      errors.push({
+        line: lineNum,
+        message: `No arrow found in rule`,
+        type: 'syntax',
+        severity: 'error',
+        snippet: line,
+        suggestion: 'Rules must contain > or =>'
+      });
+      return;
+    }
 
     const parts = line.split(arrow);
-    if (parts.length < 2) return;
+    if (parts.length < 2) {
+      errors.push({
+        line: lineNum,
+        message: `Invalid rule format`,
+        type: 'syntax',
+        severity: 'error',
+        snippet: line,
+        suggestion: 'Expected: target > replacement [/ environment]'
+      });
+      return;
+    }
+    if (parts.length > 2) {
+      errors.push({
+        line: lineNum,
+        message: `Multiple arrows found`,
+        type: 'syntax',
+        severity: 'warning',
+        snippet: line,
+        suggestion: 'Rule contains multiple > characters. Only one arrow is allowed per rule.'
+      });
+    }
 
     let target = parts[0].trim();
     let replacement = parts[1].trim();
     
-    // Handle <<first>> and >>last<<
+    // Handle first() and last() match syntax
     let firstOnly = false;
     let lastOnly = false;
-    if (target.startsWith('<<') && target.endsWith('>>')) {
-      target = target.slice(2, -2).trim();
+    const firstMatch = target.match(/^first\((.+?)\)$/);
+    const lastMatch = target.match(/^last\((.+?)\)$/);
+    
+    if (firstMatch) {
+      target = firstMatch[1].trim();
       firstOnly = true;
-    } else if (target.startsWith('>>') && target.endsWith('<<')) {
-      target = target.slice(2, -2).trim();
+    } else if (lastMatch) {
+      target = lastMatch[1].trim();
       lastOnly = true;
     }
 
@@ -1395,46 +2002,44 @@ export class BlendedScaEngine {
 
     if (replacement.includes('/')) {
       const envParts = replacement.split('/');
+      if (envParts.length > 2) {
+        errors.push({
+          line: lineNum,
+          message: `Multiple / characters in environment`,
+          type: 'syntax',
+          severity: 'warning',
+          snippet: line,
+          suggestion: 'Use only one / to separate replacement from environment'
+        });
+      }
       replacement = envParts[0].trim();
       const envStr = envParts[1].trim();
       
-      // Handle target conditions: env without _ means target feature check
-      // e.g., V > [+nasal] / [+stress]  (nasalize stressed vowels)
-      // vs  V > [+nasal] / _[+nasal] (nasalize vowel before nasal)
-      
       if (envStr.includes('!')) {
-        // Handle negation: split on ! for exceptions
         const splitEnvs = envStr.split('!');
         const envPart = splitEnvs[0].trim();
         if (envPart) {
-          // Split on comma for multiple environments
           envs = envPart.split(/,|\|/).map(e => e.trim()).filter(e => e);
         } else {
           envs = ['_'];
         }
         excs = splitEnvs.slice(1).map(e => e.trim()).filter(e => e);
       } else {
-        // Split on comma or | for multiple environments
         envs = envStr.split(/,|\|/).map(e => e.trim()).filter(e => e);
       }
       
-      // Convert target conditions (no _) to proper format
-      // A target condition like [+stress] becomes _ with a lookahead/lookbehind
       envs = envs.map(env => {
         if (!env.includes('_')) {
-          // Target condition - wrap in special marker for buildRegex to handle
           return `TARGET:${env}`;
         }
         return env;
       });
     }
 
-    // Strip comments in parentheses from environments and exceptions
-    // e.g. "C_# (only sometimes?)" -> "C_#"
     envs = envs.map(e => e.replace(/\s*\([^)]*\)/g, '').trim());
     excs = excs.map(e => e.replace(/\s*\([^)]*\)/g, '').trim());
 
-    // Handle Parallel Mapping: C {p t k} > {b d g}
+    // Handle Parallel Mapping
     const targetSetMatch = target.match(/\{([^}]+)\}/);
     const replacementSetMatch = replacement.match(/\{([^}]+)\}/);
 
@@ -1449,6 +2054,15 @@ export class BlendedScaEngine {
           rule.addSubRule(subTarget, subReplacement, envs, excs, isElse, { firstOnly, lastOnly });
         }
         return;
+      } else {
+        errors.push({
+          line: lineNum,
+          message: `Mismatched set sizes`,
+          type: 'syntax',
+          severity: 'error',
+          snippet: line,
+          suggestion: `Target set has ${targetVals.length} items, replacement set has ${replacementVals.length}. They must match.`
+        });
       }
     }
 
@@ -1556,7 +2170,7 @@ export class BlendedScaEngine {
    */
   private isHeavySyllable(syllable: string): boolean {
     const phonemes = tokenizeIPA(syllable);
-    const pattern = this.heavySyllablePattern;
+    const pattern = this.stressConfig.heavySyllablePattern;
     
     // V = vowel/diphthong, C = consonant
     let syllablePattern = '';
@@ -1584,83 +2198,255 @@ export class BlendedScaEngine {
   }
 
   /**
-   * Assign stress to syllables based on the configured pattern
+   * Get a seeded random number generator for reproducible randomness
    */
-  private assignStress(syllabifiedWord: string): string {
-    if (!this.stressPattern) return syllabifiedWord;
+  private seededRandom(seed: number): () => number {
+    let s = seed;
+    return () => {
+      s = Math.sin(s * 12.9898 + 78.233) * 43758.5453123;
+      return s - Math.floor(s);
+    };
+  }
+
+  /**
+   * Assign stress to syllables based on the configured pattern
+   * New architecture supports:
+   * - All classic patterns (initial, final, penultimate, etc.)
+   * - Random mobile with fallback options
+   * - Secondary stress assignment
+   * - User adjustments
+   */
+  private assignStress(syllabifiedWord: string, word: string = ''): string {
+    if (!this.stressConfig.pattern) return syllabifiedWord;
     
     const syllables = syllabifiedWord.split('.');
     if (syllables.length === 0) return syllabifiedWord;
     
-    let stressIndex: number = -1;
+    // Remove existing stress marks for clean assignment
+    const cleanSyllables = syllables.map(s => s.replace(/[ˈˌ]/g, ''));
     
-    switch (this.stressPattern) {
-      case 'initial':
-        stressIndex = 0;
-        break;
-      case 'final':
-        stressIndex = syllables.length - 1;
-        break;
-      case 'penultimate':
-        stressIndex = Math.max(0, syllables.length - 2);
-        break;
-      case 'antepenult':
-        stressIndex = Math.max(0, syllables.length - 3);
-        break;
-      case 'trochaic': // Strong-weak from left
-        return syllables.map((s, i) => i % 2 === 0 ? `ˈ${s}` : s).join('.');
-      case 'iambic': // Weak-strong from left
-        return syllables.map((s, i) => i % 2 === 1 ? `ˈ${s}` : s).join('.');
-      case 'dactylic': // Strong-weak-weak from left
-        return syllables.map((s, i) => i % 3 === 0 ? `ˈ${s}` : s).join('.');
-      case 'anapestic': // Weak-weak-strong from left
-        return syllables.map((s, i) => i % 3 === 2 ? `ˈ${s}` : s).join('.');
-      case 'mobile':
-        // Stress moves to the rightmost heavy syllable, defaulting to initial
-        stressIndex = 0;
-        for (let i = syllables.length - 1; i >= 0; i--) {
-          if (this.isHeavySyllable(syllables[i])) {
-            stressIndex = i;
-            break;
-          }
-        }
-        break;
-      case 'custom':
-        // Parse custom position: can be absolute (0,1,2) or negative (-1,-2)
-        const pos = parseInt(this.customStressPosition, 10);
-        if (!isNaN(pos)) {
-          if (pos >= 0) {
-            stressIndex = Math.min(pos, syllables.length - 1);
-          } else {
-            stressIndex = Math.max(0, syllables.length + pos);
-          }
-        }
-        break;
+    let primaryIndex: number = -1;
+    let secondaryIndices: number[] = [];
+    
+    // Check for user adjustment first
+    const userAdj = this.stressConfig.userAdjustments.find(a => a.word === word);
+    if (userAdj) {
+      if (userAdj.stressType === 'primary') {
+        primaryIndex = userAdj.syllableIndex;
+      } else if (userAdj.stressType === 'secondary') {
+        secondaryIndices.push(userAdj.syllableIndex);
+      }
+      // If 'none', don't assign stress to this word
+      if (userAdj.stressType === 'none') {
+        return cleanSyllables.join('.');
+      }
     }
     
-    if (stressIndex >= 0 && stressIndex < syllables.length) {
-      syllables[stressIndex] = `ˈ${syllables[stressIndex]}`;
+    // If no user adjustment for primary stress, calculate it
+    if (primaryIndex === -1) {
+      switch (this.stressConfig.pattern) {
+        case 'initial':
+          primaryIndex = 0;
+          break;
+        case 'final':
+          primaryIndex = cleanSyllables.length - 1;
+          break;
+        case 'penultimate':
+          primaryIndex = Math.max(0, cleanSyllables.length - 2);
+          break;
+        case 'antepenult':
+          primaryIndex = Math.max(0, cleanSyllables.length - 3);
+          break;
+        case 'trochaic':
+          primaryIndex = 0;
+          secondaryIndices = this.calculateSecondaryStress(cleanSyllables.length, 2);
+          break;
+        case 'iambic':
+          // Weak-Strong: primary on the 2nd syllable (index 1), or last if shorter
+          primaryIndex = Math.min(1, cleanSyllables.length - 1);
+          secondaryIndices = this.calculateSecondaryStress(cleanSyllables.length, 2, primaryIndex);
+          break;
+        case 'dactylic':
+          primaryIndex = 0;
+          secondaryIndices = this.calculateSecondaryStress(cleanSyllables.length, 3);
+          break;
+        case 'anapestic':
+          // Weak-Weak-Strong: primary on the 3rd syllable (index 2), or last if shorter
+          primaryIndex = Math.min(2, cleanSyllables.length - 1);
+          secondaryIndices = this.calculateSecondaryStress(cleanSyllables.length, 3, primaryIndex);
+          break;
+        case 'mobile':
+          // Stress moves to the rightmost heavy syllable, defaulting to initial
+          primaryIndex = 0;
+          for (let i = cleanSyllables.length - 1; i >= 0; i--) {
+            if (this.isHeavySyllable(cleanSyllables[i])) {
+              primaryIndex = i;
+              break;
+            }
+          }
+          break;
+        case 'random-mobile':
+          // Random stress assignment with optional seed for reproducibility
+          const rng = this.stressConfig.randomMobile.seed !== null 
+            ? this.seededRandom(this.stressConfig.randomMobile.seed)
+            : Math.random;
+          primaryIndex = Math.floor(rng() * cleanSyllables.length);
+          break;
+        case 'custom':
+          // Parse custom position: can be absolute (0,1,2) or negative (-1,-2)
+          const pos = parseInt(this.stressConfig.customPosition, 10);
+          if (!isNaN(pos)) {
+            if (pos >= 0) {
+              primaryIndex = Math.min(pos, cleanSyllables.length - 1);
+            } else {
+              primaryIndex = Math.max(0, cleanSyllables.length + pos);
+            }
+          }
+          break;
+      }
     }
     
-    return syllables.join('.');
+    // Calculate secondary stress if enabled and not already set by user
+    if (this.stressConfig.secondaryStress.enabled && secondaryIndices.length === 0) {
+      secondaryIndices = this.calculateSecondaryStress(
+        cleanSyllables.length, 
+        this.stressConfig.secondaryStress.customInterval || 2,
+        primaryIndex
+      );
+    }
+    
+    // Apply stress marks
+    const result = cleanSyllables.map((s, i) => {
+      if (i === primaryIndex) {
+        return `ˈ${s}`;
+      } else if (secondaryIndices.includes(i)) {
+        return `ˌ${s}`;
+      }
+      return s;
+    });
+    
+    return result.join('.');
+  }
+
+  /**
+   * Calculate secondary stress indices.
+   *
+   * Strong (foot-head) positions are those where
+   *   (i - primaryIndex) is a non-zero multiple of `interval`.
+   *
+   * The `direction` flag controls which end any leftover syllables
+   * are left at.  For LTR we iterate left-to-right; for RTL we
+   * iterate right-to-left and reverse at the end so the returned
+   * array is always in ascending order.
+   *
+   * @param syllableCount  total number of syllables in the word
+   * @param interval       foot size (2 = binary, 3 = ternary)
+   * @param primaryIndex   index that already has primary stress
+   */
+  private calculateSecondaryStress(
+    syllableCount: number,
+    interval: number,
+    primaryIndex: number = 0
+  ): number[] {
+    const { direction } = this.stressConfig.secondaryStress;
+    const indices: number[] = [];
+
+    if (direction === 'rtl') {
+      // Build feet from the right edge.  A position i is a foot-head when
+      // (syllableCount - 1 - i) is a non-negative multiple of `interval` 
+      // and it is not the primary stress.
+      for (let i = syllableCount - 1; i >= 0; i--) {
+        const distFromRight = syllableCount - 1 - i;
+        if (i !== primaryIndex && distFromRight % interval === 0) {
+          indices.push(i);
+        }
+      }
+      // Return in ascending order
+      return indices.reverse();
+    } else {
+      // LTR: a position i is a foot-head when (i - primaryIndex) is a
+      // positive multiple of `interval`.
+      for (let i = 0; i < syllableCount; i++) {
+        const dist = i - primaryIndex;
+        // Use positive modular distance so negative i values work too
+        const mod = ((dist % interval) + interval) % interval;
+        if (i !== primaryIndex && mod === 0) {
+          indices.push(i);
+        }
+      }
+      return indices;
+    }
   }
 
   /**
    * Fix stress placement after sound changes if auto-fix is enabled
+   * For random-mobile: only reassign if the original syllable's nucleus disappeared
    */
-  private fixStress(word: string): string {
-    if (!this.stressAutoFix && !this.stressEnforceSafety) return word;
+  private fixStress(word: string, originalWord: string = ''): string {
+    if (!this.stressConfig.autoFix && !this.stressConfig.enforceSafety) return word;
     
     // Remove existing stress marks
     const unstressed = word.replace(/[ˈˌ]/g, '');
     
-    // Re-syllabify and re-assign stress
+    // Re-syllabify
     const syllabified = this.syllabify(unstressed);
-    return this.assignStress(syllabified);
+    const syllables = syllabified.split('.');
+    
+    // For random-mobile pattern, check if we need to relocate stress
+    if (this.stressConfig.pattern === 'random-mobile') {
+      // Find where stress currently is
+      const stressedMatch = word.match(/[ˈˌ]([^.]+)/);
+      if (stressedMatch) {
+        const stressedSyllable = stressedMatch[1].replace(/[ˈˌ]/g, '');
+        const currentIndex = syllables.findIndex(s => s.replace(/[ˈˌ]/g, '') === stressedSyllable);
+        
+        // If syllable still exists, keep stress there
+        if (currentIndex !== -1) {
+          const cleanSyllables = syllables.map(s => s.replace(/[ˈˌ]/g, ''));
+          return cleanSyllables.map((s, i) => i === currentIndex ? `ˈ${s}` : s).join('.');
+        }
+        
+        // If original syllable disappeared, relocate based on fallback direction
+        const { fallbackDirection } = this.stressConfig.randomMobile;
+        let newIndex = -1;
+        
+        // Try to find the nearest syllable with a similar nucleus
+        const originalIndex = parseInt(originalWord.match(/\d+/)?.[0] || '0', 10);
+        
+        if (fallbackDirection === 'next') {
+          // Look for next available syllable
+          newIndex = Math.min(originalIndex, syllables.length - 1);
+        } else {
+          // Look for previous available syllable
+          newIndex = Math.max(0, originalIndex - 1);
+        }
+        
+        if (newIndex >= 0 && newIndex < syllables.length) {
+          const cleanSyllables = syllables.map(s => s.replace(/[ˈˌ]/g, ''));
+          return cleanSyllables.map((s, i) => i === newIndex ? `ˈ${s}` : s).join('.');
+        }
+      }
+    }
+    
+    // For other patterns, re-run normal stress assignment
+    return this.assignStress(syllabified, word);
+  }
+
+  /**
+   * Public method to syllabify a list of words (used for displaying syllable boundaries)
+   */
+  public syllabifyWords(words: string[]): string {
+    return words.map(w => this.syllabify(w)).join(' ');
   }
 
   private applyToWord(word: string): BlendedScaResult {
-    const history: { rule: string; before: string; after: string }[] = [];
+    const history: { 
+      rule: string; 
+      before: string; 
+      after: string;
+      syllableStructure?: string;
+      stressPattern?: string;
+    }[] = [];
     const intermediateRomanizations: Record<string, string> = {};
 
     let current = word;
@@ -1679,7 +2465,7 @@ export class BlendedScaEngine {
     current = words.map(w => {
       const syllabified = this.syllabify(w);
       // Assign stress if pattern is configured
-      return this.stressPattern ? this.assignStress(syllabified) : syllabified;
+      return this.stressConfig.pattern ? this.assignStress(syllabified, w) : syllabified;
     }).join(' ');
 
     for (const rule of this.rules) {
@@ -1700,12 +2486,31 @@ export class BlendedScaEngine {
       current = rule.apply(current);
       
       // Fix stress if auto-fix is enabled and word changed
-      if (current !== before && this.stressAutoFix && this.stressPattern) {
+      if (current !== before && this.stressConfig.autoFix && this.stressConfig.pattern) {
         current = this.fixStress(current);
       }
       
       if (current !== before) {
-        history.push({ rule: rule.name || 'unnamed', before, after: current });
+        // Extract syllable and stress state for tracking
+        const beforeSyllables = before.split(/\s+/);
+        const afterSyllables = current.split(/\s+/);
+        const syllableStructure = afterSyllables.map(s => {
+          const count = s.split('.').length;
+          return `${count}σ`;
+        }).join(' ');
+        const stressPattern = afterSyllables.map(s => {
+          if (s.includes('ˈ')) return 'P';
+          if (s.includes('ˌ')) return 'S';
+          return 'U';
+        }).join('-');
+        
+        history.push({ 
+          rule: rule.name || 'unnamed', 
+          before, 
+          after: current,
+          syllableStructure,
+          stressPattern
+        });
       }
 
       for (const cleanupName of this.activeCleanupRules) {
