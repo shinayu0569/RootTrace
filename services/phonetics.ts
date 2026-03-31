@@ -494,8 +494,10 @@ export const tokenizeIPA = (word: string): string[] => {
   // Pattern: Optional Stress -> Base -> (Tie+Base repeats) -> Any number of modifiers
   // OR: Literal dot for syllable boundary
   // OR: Literal comma for cognate set boundary
+  // OR: Standalone stress marks (for stress manipulation rules)
+  // Use character classes [.] [+] [-] to match literal characters safely
   const pattern = new RegExp(
-    `(?:${stress}?[${baseRange}](?:${tieBars}[${baseRange}])*${modifiers}*)|\\.|,|\\+|-`, 
+    `(?:${stress}?[${baseRange}](?:${tieBars}[${baseRange}])*${modifiers}*)|${stress}|[.]|[,]|[+]|[\-]`, 
     'gu'
   );
 
