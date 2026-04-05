@@ -1367,81 +1367,168 @@ export default function App() {
    * Feature 6.0: Multi-Word Batch Input Handlers
    * 
    * Parses multi-line text input where each line represents a cognate set.
-   * Format: Language: word1, word2, word3
-   * or: word1 (Language1), word2 (Language2)
+   * 
+   * Enhanced Format Support:
+   * - Language: word — basic format
+   * - Language: word (spelling) — with orthographic representation
+   * - > Language: word — marks as ancestor of subsequent indented entries
+   * - *Language: word — marks as unattested language (no direct evidence)
+   * - Language: word1, word2, word3 — multiple cognate sets
+   * 
+   * Example:
+   *   > *Proto-Indo-European: ph₂tḗr (pater)
+   *       Latin: pater
+   *       Greek: patēr
    */
-  const parseMultiWordInput = (text: string): { gloss: string; forms: LanguageInput[] }[] => {
-    const lines = text.trim().split('\n').filter(l => l.trim());
-    const cognateSets: { gloss: string; forms: LanguageInput[] }[] = [];
+  const parseMultiWordInput = (text: string): { 
+    gloss: string; 
+    forms: (LanguageInput & { spelling?: string; isUnattested?: boolean; parentPath?: number[] })[];
+    hierarchy: Map<string, string[]>; // language -> descendant names
+  }[] => {
+    const lines = text.trim().split('\n').map((l, i) => ({ 
+      text: l.trim(), 
+      index: i,
+      indent: l.search(/\S/) // count leading spaces
+    })).filter(l => l.text);
     
-    // Try to detect format: if lines contain colons, use Language: word format
-    const hasColonFormat = lines.some(l => l.includes(':'));
+    const cognateSets: { 
+      gloss: string; 
+      forms: (LanguageInput & { spelling?: string; isUnattested?: boolean; parentPath?: number[] })[];
+      hierarchy: Map<string, string[]>;
+    }[] = [];
     
-    if (hasColonFormat) {
-      // Format: Language: word1, word2 OR Language: word
-      const languageMap = new Map<string, string[]>();
+    // Parse language entries with their properties
+    const parseEntry = (line: string): {
+      name: string;
+      words: string[];
+      spellings: string[];
+      isAncestor: boolean;
+      isUnattested: boolean;
+      originalLine: string;
+    } | null => {
+      // Check for ancestor marker (>)
+      const isAncestor = line.startsWith('>');
+      if (isAncestor) line = line.substring(1).trim();
       
-      lines.forEach(line => {
-        const colonIndex = line.indexOf(':');
-        if (colonIndex > 0) {
-          const langName = line.substring(0, colonIndex).trim();
-          const wordsStr = line.substring(colonIndex + 1).trim();
-          // Split by comma or space
-          const words = wordsStr.split(/[,\s]+/).filter(w => w.trim());
-          
-          if (!languageMap.has(langName)) {
-            languageMap.set(langName, []);
-          }
-          languageMap.get(langName)!.push(...words);
-        }
-      });
+      // Check for unattested marker (*)
+      const isUnattested = line.startsWith('*');
+      if (isUnattested) line = line.substring(1).trim();
       
-      // Convert to cognate sets - each word position is a gloss
-      const maxWords = Math.max(...Array.from(languageMap.values()).map(w => w.length));
+      // Parse Language: word(s) format
+      const colonIndex = line.indexOf(':');
+      if (colonIndex <= 0) return null;
       
-      for (let i = 0; i < maxWords; i++) {
-        const forms: LanguageInput[] = [];
-        let wordIndex = 0;
-        
-        languageMap.forEach((words, langName) => {
-          if (words[i]) {
-            forms.push({
-              id: `batch-${langName}-${i}`,
-              name: langName,
-              word: words[i]
-            });
-          }
-        });
-        
-        if (forms.length >= 2) {
-          cognateSets.push({
-            gloss: `cognate-${i + 1}`,
-            forms
-          });
+      const langName = line.substring(0, colonIndex).trim();
+      const wordsStr = line.substring(colonIndex + 1).trim();
+      
+      // Parse words with optional spellings: word (spelling), word2 (spelling2)
+      const words: string[] = [];
+      const spellings: string[] = [];
+      
+      // Split by comma, but handle parentheses
+      const wordMatches = wordsStr.matchAll(/([^,]+?)(?:\s*\(([^)]+)\))?\s*(?:,|$)/g);
+      for (const match of wordMatches) {
+        const word = match[1]?.trim();
+        const spelling = match[2]?.trim();
+        if (word) {
+          words.push(word);
+          spellings.push(spelling || '');
         }
       }
-    } else {
-      // Simple format: one word per line, grouped by consecutive lines
-      // Assume alternating languages or use a header row
-      const words = lines.map(l => l.trim()).filter(l => l);
       
-      // Try to detect language from word patterns or use generic names
-      const chunkSize = Math.max(2, Math.floor(words.length / 2));
+      // Fallback: if no complex parsing worked, just split by comma
+      if (words.length === 0) {
+        const simpleWords = wordsStr.split(',').map(w => w.trim()).filter(w => w);
+        words.push(...simpleWords);
+        spellings.push(...simpleWords.map(() => ''));
+      }
       
-      for (let i = 0; i < words.length; i += chunkSize) {
-        const chunk = words.slice(i, i + chunkSize);
-        const forms: LanguageInput[] = chunk.map((word, idx) => ({
-          id: `batch-${i}-${idx}`,
-          name: `Language ${(i / chunkSize) + 1}`,
-          word
-        }));
+      return {
+        name: langName,
+        words,
+        spellings,
+        isAncestor,
+        isUnattested,
+        originalLine: line
+      };
+    };
+    
+    // Group entries by indentation level to build hierarchy
+    const buildHierarchy = (entries: ReturnType<typeof parseEntry>[]): Map<string, string[]> => {
+      const hierarchy = new Map<string, string[]>();
+      const stack: { name: string; level: number }[] = [];
+      
+      entries.forEach((entry, idx) => {
+        if (!entry) return;
         
-        if (forms.length >= 2) {
-          cognateSets.push({
-            gloss: `cognate-${Math.floor(i / chunkSize) + 1}`,
-            forms
-          });
+        const currentLevel = lines[idx]?.indent || 0;
+        
+        // Find parent (last entry with less indentation)
+        while (stack.length > 0 && stack[stack.length - 1].level >= currentLevel) {
+          stack.pop();
         }
+        
+        if (stack.length > 0) {
+          const parent = stack[stack.length - 1].name;
+          if (!hierarchy.has(parent)) {
+            hierarchy.set(parent, []);
+          }
+          hierarchy.get(parent)!.push(entry.name);
+        }
+        
+        stack.push({ name: entry.name, level: currentLevel });
+      });
+      
+      return hierarchy;
+    };
+    
+    // Parse all entries
+    const allEntries = lines.map(l => parseEntry(l.text));
+    const hierarchy = buildHierarchy(allEntries);
+    
+    // Group into cognate sets by word position
+    const maxWords = Math.max(...allEntries.filter(e => e !== null).map(e => e!.words.length), 1);
+    
+    for (let wordIdx = 0; wordIdx < maxWords; wordIdx++) {
+      const forms: (LanguageInput & { spelling?: string; isUnattested?: boolean; parentPath?: number[] })[] = [];
+      
+      allEntries.forEach((entry, entryIdx) => {
+        if (!entry || wordIdx >= entry.words.length) return;
+        
+        // Find parent path if exists
+        const parentPath: number[] = [];
+        const currentLevel = lines[entryIdx]?.indent || 0;
+        
+        // Look backwards for parent
+        for (let i = entryIdx - 1; i >= 0; i--) {
+          const prevLevel = lines[i]?.indent || 0;
+          if (prevLevel < currentLevel) {
+            // Found parent
+            const parentIdx = forms.findIndex(f => f.name === allEntries[i]?.name);
+            if (parentIdx >= 0) {
+              parentPath.push(parentIdx);
+            }
+            break;
+          }
+        }
+        
+        forms.push({
+          id: `batch-${entry.name}-${wordIdx}-${entryIdx}`,
+          name: entry.name,
+          word: entry.words[wordIdx],
+          spelling: entry.spellings[wordIdx] || undefined,
+          isUnattested: entry.isUnattested,
+          parentPath: parentPath.length > 0 ? parentPath : undefined,
+          descendants: []
+        });
+      });
+      
+      if (forms.length >= 2) {
+        cognateSets.push({
+          gloss: `cognate-${wordIdx + 1}`,
+          forms,
+          hierarchy
+        });
       }
     }
     
@@ -1465,9 +1552,74 @@ export default function App() {
     setErrorMsg(null);
     
     try {
+      // Convert forms to proper LanguageInput with hierarchy
+      const processFormsWithHierarchy = (forms: ReturnType<typeof parseMultiWordInput>[0]['forms']): LanguageInput[] => {
+        const result: LanguageInput[] = [];
+        const indexMap = new Map<string, number>(); // name -> index in result
+        
+        // First pass: create all nodes
+        forms.forEach((form, idx) => {
+          const node: LanguageInput = {
+            id: form.id,
+            name: form.name,
+            word: form.word,
+            spelling: form.spelling,
+            isUnattested: form.isUnattested,
+            descendants: []
+          };
+          result.push(node);
+          indexMap.set(form.name, idx);
+        });
+        
+        // Second pass: build hierarchy based on parentPath
+        // Process in reverse to properly nest descendants
+        for (let i = forms.length - 1; i >= 0; i--) {
+          const form = forms[i];
+          if (form.parentPath && form.parentPath.length > 0) {
+            const parentIdx = form.parentPath[0];
+            if (parentIdx >= 0 && parentIdx < result.length) {
+              // Remove this node from top level and add to parent's descendants
+              const node = result[i];
+              // Don't actually remove from array, just mark for hierarchy
+              // Instead, we'll filter later
+            }
+          }
+        }
+        
+        // Build proper tree: filter out nodes that have parents, keep only roots
+        const hasParent = new Set<number>();
+        forms.forEach((form, idx) => {
+          if (form.parentPath && form.parentPath.length > 0) {
+            hasParent.add(idx);
+          }
+        });
+        
+        // Build descendants arrays
+        forms.forEach((form, idx) => {
+          if (form.parentPath && form.parentPath.length > 0) {
+            const parentIdx = form.parentPath[form.parentPath.length - 1];
+            if (parentIdx >= 0 && parentIdx < result.length) {
+              if (!result[parentIdx].descendants) {
+                result[parentIdx].descendants = [];
+              }
+              result[parentIdx].descendants!.push(result[idx]);
+            }
+          }
+        });
+        
+        // Return only root nodes
+        return result.filter((_, idx) => !hasParent.has(idx));
+      };
+      
+      // Process each cognate set
+      const processedSets = cognateSets.map(set => ({
+        gloss: set.gloss,
+        forms: processFormsWithHierarchy(set.forms)
+      }));
+      
       const { reconstructBatchEnhanced } = await import('./services/engine');
       const result = await reconstructBatchEnhanced(
-        cognateSets,
+        processedSets,
         paradigms.length > 0 ? paradigms : undefined,
         method,
         { mcmcIterations, gapPenalty, unknownCharPenalty }
@@ -1702,20 +1854,33 @@ export default function App() {
                 </button>
               </div>
               
-              <p className="text-[10px] text-rt-muted mb-2">
-                Enter words for multiple cognate sets. Format:
-                <code className="block bg-rt-input p-1.5 rounded mt-1 font-mono text-[9px]">
-                  Language: word1, word2, word3<br/>
-                  Language2: word1, word2, word3
-                </code>
-              </p>
+              <div className="text-[10px] text-rt-muted mb-3 space-y-1">
+                <p><strong>Basic:</strong> <code>Latin: pater, mater</code></p>
+                <p><strong>With spelling:</strong> <code>Latin: pater (pater), frater (frater)</code></p>
+                <p><strong>Hierarchy:</strong> <code>{`>`} Ancestor: word<br/>  &nbsp;&nbsp;Descendant: word</code></p>
+                <p><strong>Unattested:</strong> <code>*Proto-Lang: word</code> (auto-reconstructed)</p>
+                <p><strong>Combined:</strong> <code>{`> *`}Proto-IE: ph₂tḗr (pater)<br/>  &nbsp;&nbsp;Latin: pater (pater)</code></p>
+              </div>
               
               <textarea
                 value={multiWordText}
                 onChange={e => setMultiWordText(e.target.value)}
-                placeholder="Latin: pater, mater, frater&#10;Greek: pater, meter, phrater&#10;Sanskrit: pitr, matr, bhratr"
-                className="w-full h-32 bg-rt-input border border-rt-border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:border-rt-accent text-rt-text resize-none custom-scrollbar mb-3"
+                placeholder="> *Proto-Indo-European: ph₂tḗr (pater), meter (mater)&#10;    Latin: pater (pater), mater (mater)&#10;    Greek: pater (pater), meter (mater)&#10;    Sanskrit: pitr (pitr), matr (matr)"
+                className="w-full h-40 bg-rt-input border border-rt-border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:border-rt-accent text-rt-text resize-none custom-scrollbar mb-3"
               />
+              
+              {/* Legend for indicators */}
+              <div className="flex flex-wrap gap-2 mb-3 text-[9px] text-rt-muted">
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-rt-accent"></span> Ancestor
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span> Unattested
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full border border-rt-border"></span> Has Spelling
+                </span>
+              </div>
               
               <div className="flex gap-2">
                 <button
