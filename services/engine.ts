@@ -24,6 +24,9 @@ import {
   InferredShift, GeneralizedSoundLaw,
   CognateCompatibilityFlag, PhylogeneticSpreadScore,
 } from '../types';
+
+// Re-export ReconstructionMethod for consumers of this module
+export { ReconstructionMethod } from '../types';
 import {
   tokenizeIPA, needlemanWunsch, GAP_CHAR, getPhoneticDistance, FEATURE_MAP,
   getEffectiveFeatures, evaluateNaturalness, getSonority,
@@ -861,22 +864,203 @@ const annotateCandidate = (
 // §5 — NATURALNESS PILLARS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Pillar 1: Sonority Sequencing Principle + cluster penalties */
+/** Pillar 1: Sonority Sequencing Principle + cluster penalties
+ * 
+ * GRADED SONORITY HIERARCHY IMPLEMENTATION:
+ * Instead of binary violation detection, this function calculates penalties
+ * proportional to the degree of SSP violation. Small sonority rises are 
+ * penalized less than flat or inverted sonority profiles.
+ * 
+ * Sonority scale (0-10):
+ *   10 = Vowels (most sonorous)
+ *    9 = Glides (j, w, ɥ, ɰ)
+ *    8 = Liquids (r, l, ɾ, ɹ)
+ *    7 = Nasals (m, n, ŋ, ɲ)
+ *    6 = Voiced fricatives (v, z, ð, ɣ)
+ *    5 = Voiceless fricatives (f, s, θ, x)
+ *    4 = Voiced affricates (dz, dʒ)
+ *    3 = Voiceless affricates (ts, tʃ)
+ *    2 = Voiced stops (b, d, g)
+ *    1 = Voiceless stops (p, t, k) (least sonorous)
+ *    0 = Gaps, syllable boundaries
+ */
 const evaluateSequenceNaturalness = (sequence: string[]): number => {
   const tokens = sequence.filter(t => t !== GAP_CHAR && t !== '.' && t !== ',');
   if (tokens.length === 0) return 0;
+  
   let penalty = 0;
   const sonorities = tokens.map(getSonority);
+  
+  // Identify syllable nuclei (positions with sonority = 10, i.e., vowels)
+  const nucleiPositions: number[] = [];
+  for (let i = 0; i < sonorities.length; i++) {
+    if (sonorities[i] === 10) {
+      nucleiPositions.push(i);
+    }
+  }
+  
+  // If no vowels found, heavy penalty for vowel-less sequence
+  if (nucleiPositions.length === 0) {
+    penalty += 3.0;
+  }
+  
+  // Helper: Calculate sonority rise/drop between two positions
+  const sonorityDelta = (from: number, to: number): number => sonorities[to] - sonorities[from];
+  
+  // Helper: Check if position is part of an onset (preceding a nucleus)
+  const isOnsetPosition = (pos: number): boolean => {
+    for (const nucleusPos of nucleiPositions) {
+      if (pos < nucleusPos && nucleusPos - pos <= 3) {
+        // Check if there's no intervening vowel between pos and nucleus
+        for (let i = pos + 1; i < nucleusPos; i++) {
+          if (sonorities[i] === 10) return false;
+        }
+        return true;
+      }
+    }
+    return false;
+  };
+  
+  // Process each position in the sequence
   for (let i = 0; i < sonorities.length; i++) {
     const current = sonorities[i];
     const prev = i > 0 ? sonorities[i - 1] : null;
-    if (i === 1 && prev !== null && prev < 10 && current < 10 && prev > current) penalty += 5.0;
-    if (prev !== null && prev < 10 && current < 10) {
-      penalty += 0.5;
-      if (i > 1 && sonorities[i - 2] < 10) penalty += 2.0;
+    const next = i < sonorities.length - 1 ? sonorities[i + 1] : null;
+    
+    // Skip gaps/boundaries
+    if (current === 0) continue;
+    
+    // === ONSET ANALYSIS (positions before a vowel) ===
+    if (isOnsetPosition(i)) {
+      // Find the target nucleus
+      let targetNucleus = -1;
+      for (const nucleusPos of nucleiPositions) {
+        if (i < nucleusPos) {
+          targetNucleus = nucleusPos;
+          break;
+        }
+      }
+      
+      if (targetNucleus !== -1) {
+        // Calculate expected sonority at this position for ideal SSP
+        // The closer to the nucleus, the higher the expected sonority
+        const distanceToNucleus = targetNucleus - i;
+        
+        // For a well-formed onset, sonority should increase as we approach the nucleus
+        // Ideal: voiceless stop (1) → voiced stop (2) → affricate (3-4) → fricative (5-6) 
+        //        → nasal (7) → liquid (8) → glide (9) → vowel (10)
+        
+        if (i > 0 && prev !== null && prev < 10 && current < 10) {
+          // This is a consonant cluster within the onset
+          const sonorityRise = current - prev;
+          
+          if (sonorityRise < 0) {
+            // INVERTED SONORITY: severe violation (e.g., /pn-/, /tl-/)
+            // Penalty proportional to the degree of inversion
+            const inversionDegree = Math.abs(sonorityRise);
+            penalty += 3.0 + (inversionDegree * 0.8);
+          } else if (sonorityRise === 0) {
+            // FLAT SONORITY: moderate violation (e.g., /sn-/, /st-/)
+            // Same sonority level is better than inverted, but still bad
+            penalty += 1.5 + (0.5 * distanceToNucleus);
+          } else if (sonorityRise < 2) {
+            // SMALL RISE: slight penalty for insufficient rise
+            // e.g., /kn-/ (1→2 = rise of 1) or /pr-/ (1→8 = rise of 7 is good)
+            penalty += 0.3 * (2 - sonorityRise);
+          }
+          // sonorityRise >= 2: Good rise, no penalty
+        }
+        
+        // Word-initial position special handling
+        if (i === 0 && current < 10) {
+          // Word-initial stops are fine (most common)
+          // But if we have a complex onset, check its well-formedness
+          if (next !== null && next < 10) {
+            // Initial cluster - sonority should rise
+            const initialRise = next - current;
+            if (initialRise < 0) {
+              // Initial inverted sonority is particularly bad
+              penalty += 2.0 + (Math.abs(initialRise) * 0.5);
+            }
+          }
+        }
+      }
+    }
+    
+    // === CODA ANALYSIS (positions after a vowel) ===
+    // In codas, sonority should ideally fall (mirror of onset)
+    // But this is less strictly enforced than onset SSP
+    const isCodaPosition = (pos: number): boolean => {
+      for (const nucleusPos of nucleiPositions) {
+        if (pos > nucleusPos && pos - nucleusPos <= 3) {
+          // Check if there's no intervening vowel between nucleus and pos
+          for (let i = nucleusPos + 1; i < pos; i++) {
+            if (sonorities[i] === 10) return false;
+          }
+          return true;
+        }
+      }
+      return false;
+    };
+    
+    if (isCodaPosition(i) && prev !== null && prev < 10 && current < 10) {
+      // In coda, sonority ideally falls (higher → lower as we move away from nucleus)
+      // But falling sonority is less strictly required than in onsets
+      const sonorityChange = current - prev; // Negative = falling (good for coda)
+      
+      if (sonorityChange > 0) {
+        // Rising sonority in coda is slightly dispreferred
+        penalty += 0.2 * sonorityChange;
+      }
+    }
+    
+    // === EXCESSIVE CLUSTERING PENALTY ===
+    // Check for clusters of 3+ consonants (regardless of sonority profile)
+    if (i >= 2 && prev !== null && sonorities[i - 2] < 10 && prev < 10 && current < 10) {
+      // Triple consonant cluster detected
+      penalty += 1.0;
+      
+      // Check if any of these positions are syllable onsets
+      // If none are, this is a very bad medial cluster
+      const anyInOnset = isOnsetPosition(i) || isOnsetPosition(i - 1) || isOnsetPosition(i - 2);
+      if (!anyInOnset) {
+        penalty += 1.5; // Excessive medial clustering
+      }
     }
   }
-  return penalty;
+  
+  // === SYLLABLE CONTACT LAW (bonus for good inter-syllabic transitions) ===
+  // When a coda meets an onset, prefer rising sonority
+  for (let i = 1; i < sonorities.length - 1; i++) {
+    if (sonorities[i] === 10) continue; // Skip nuclei
+    
+    // Check if this position could be at syllable boundary
+    // (preceded by vowel or followed by vowel, but not both)
+    const prevIsVowel = i > 0 && sonorities[i - 1] === 10;
+    const nextIsVowel = i < sonorities.length - 1 && sonorities[i + 1] === 10;
+    
+    if (prevIsVowel && !nextIsVowel) {
+      // Coda position - check next consonant
+      for (let j = i + 1; j < sonorities.length && sonorities[j] !== 10; j++) {
+        if (j < sonorities.length - 1) {
+          const codaSonority = sonorities[i];
+          const nextOnsetSonority = sonorities[j];
+          
+          // Syllable Contact Law: prefer coda to be less sonorous than following onset
+          if (codaSonority > nextOnsetSonority) {
+            // Rising sonority across syllable boundary is good
+            penalty -= 0.1; // Small bonus
+          } else if (codaSonority < nextOnsetSonority) {
+            // Falling sonority across syllable boundary is dispreferred
+            penalty += 0.3 * (nextOnsetSonority - codaSonority);
+          }
+        }
+        break; // Only check first consonant of next onset
+      }
+    }
+  }
+  
+  return Math.max(0, penalty);
 };
 
 /** Pillar 2: Feature economy + consonant/vowel balance */
@@ -1050,10 +1234,30 @@ export const prefetchAttestedShifts = async (
   ]);
 };
 
+/**
+ * CONDITIONED CHANGE SCORING
+ * 
+ * This function implements environment-aware bonus scaling. The core insight:
+ * A sound change like /t/ > /d/ is highly natural in intervocalic position,
+ * but unnatural word-initially. The bonus should reflect this.
+ * 
+ * Algorithm:
+ *   1. Compute base bonus from rules, Diachronica frequencies, and features
+ *   2. Compute environment match score (0.0–1.0) comparing actual context 
+ *      against attested/expected environments for this change
+ *   3. Scale bonus: finalBonus = baseBonus * (0.5 + 0.5 * envMatchScore)
+ * 
+ * This ensures:
+ *   - Perfect environment match → full bonus
+ *   - Partial match → reduced bonus
+ *   - Mismatched environment → minimal bonus (50% floor)
+ */
 const getNaturalChangeBonusSync = (p: string, reflex: string, left: string | null, right: string | null): number => {
   const fP = getEffectiveFeatures(p), fR = getEffectiveFeatures(reflex);
   if (!fP || !fR) return 0;
-  let bonus = 0;
+  
+  // === STEP 1: Compute base bonus (unchanged components) ===
+  let baseBonus = 0;
   const ctx: ChangeContext = {
     left: left && left !== GAP_CHAR ? getEffectiveFeatures(left) : null,
     right: right && right !== GAP_CHAR ? getEffectiveFeatures(right) : null,
@@ -1062,26 +1266,27 @@ const getNaturalChangeBonusSync = (p: string, reflex: string, left: string | nul
   };
   const fP_full: DistinctiveFeaturesWithSymbol = { ...fP, symbol: p };
   const fR_full: DistinctiveFeaturesWithSymbol = { ...fR, symbol: reflex };
+  
+  // Rule matching bonus
   const matchedRules = NATURAL_SOUND_CHANGES.filter(rule => rule.test(fP_full, fR_full, ctx));
-  if (matchedRules.length > 0) bonus += matchedRules[0].priority * 0.03;
+  if (matchedRules.length > 0) baseBonus += matchedRules[0].priority * 0.03;
 
-  // ENHANCED: Environment-aware Diachronica bonus
-  const diachronicaBaseBonus = getDiachronicaEnvironmentBonus(p, reflex, left, right);
-  bonus += diachronicaBaseBonus;
+  // Diachronica frequency bonus (already environment-aware)
+  const diachronicaBonus = getDiachronicaEnvironmentBonus(p, reflex, left, right);
+  baseBonus += diachronicaBonus;
 
   // Fallback: Basic frequency bonus for shifts with high frequency
   const shiftKey = `${p}>${reflex}`;
   const freqData = (diachronicaFreqs as any)[shiftKey];
   if (freqData && freqData.count >= 3) {
-    // Reduced base bonus since environment matching now provides most value
-    bonus += 0.02 + Math.log10(freqData.count) * 0.04;
+    baseBonus += 0.02 + Math.log10(freqData.count) * 0.04;
   } else if (freqData && freqData.count > 0) {
-    bonus += 0.01;
+    baseBonus += 0.01;
   } else {
-    bonus += 0.005;
+    baseBonus += 0.005;
   }
 
-  // Feature-based naturalness (unchanged)
+  // Feature-based naturalness
   const delta: string[] = [];
   for (const k in fP) {
     if (fP[k as keyof typeof fP] !== fR[k as keyof typeof fR]) delta.push(`${k}:${fR[k as keyof typeof fR]}`);
@@ -1090,33 +1295,321 @@ const getNaturalChangeBonusSync = (p: string, reflex: string, left: string | nul
     const deltaKey = delta.sort().join(',');
     const featureFreq = (featureFreqs as any)[deltaKey];
     if (featureFreq) {
-      bonus += 0.02 + Math.log10(featureFreq) * 0.03;
+      baseBonus += 0.02 + Math.log10(featureFreq) * 0.03;
     }
     const naturalness = evaluateNaturalness(p, reflex, left, right);
-    bonus += naturalness.score * 0.15;
+    baseBonus += naturalness.score * 0.15;
   }
 
-  // Positional bonuses (unchanged)
+  // Positional bonuses (these become environment-dependent)
   const isVowel = (c: string | null) => c && FEATURE_MAP[c]?.syllabic;
-  const isIntervocalic = left && right && isVowel(left) && isVowel(right);
-  if (isIntervocalic || right === null) {
-    if ((!fP.voice && fR.voice) || (fP.consonantal && !fR.consonantal) || reflex === GAP_CHAR) bonus += 0.12;
+  const isConsonant = (c: string | null) => c && FEATURE_MAP[c]?.consonantal && !FEATURE_MAP[c]?.syllabic;
+  const isIntervocalic = isVowel(left) && isVowel(right);
+  const isWordInitial = left === null || left === GAP_CHAR;
+  const isWordFinal = right === null || right === GAP_CHAR;
+  const isPreConsonantal = isConsonant(right);
+  const isPostConsonantal = isConsonant(left);
+
+  // Lenition bonuses (strongest in intervocalic/word-final positions)
+  if (isIntervocalic || isWordFinal) {
+    if ((!fP.voice && fR.voice) || (fP.consonantal && !fR.consonantal) || reflex === GAP_CHAR) {
+      baseBonus += 0.12;
+    }
   }
-  if (left === null && p === reflex) bonus += 0.04;
-  if (fP.nasal && right && FEATURE_MAP[right] && !FEATURE_MAP[right].syllabic) {
+  
+  // Word-initial stability (no bonus for changes here unless supported by data)
+  if (isWordInitial && p === reflex) {
+    baseBonus += 0.04;
+  }
+  
+  // Nasal assimilation (context-sensitive)
+  if (fP.nasal && right && !isVowel(right)) {
     const rf = FEATURE_MAP[right];
-    if ((fR.labial && rf.labial) || (fR.coronal && rf.coronal) || (fR.dorsal && rf.dorsal)) bonus += 0.12;
+    if (rf && ((fR.labial && rf.labial) || (fR.coronal && rf.coronal) || (fR.dorsal && rf.dorsal))) {
+      baseBonus += 0.12;
+    }
   }
+  
+  // Palatalization (requires high/front vowel/glide following)
   if ((fP.dorsal || fP.coronal) && fR.coronal && fR.delayedRelease) {
-    if (right && FEATURE_MAP[right] && (FEATURE_MAP[right].high || FEATURE_MAP[right].coronal) && !FEATURE_MAP[right].consonantal) bonus += 0.12;
+    if (right && FEATURE_MAP[right] && (FEATURE_MAP[right].high || FEATURE_MAP[right].coronal) && !FEATURE_MAP[right].consonantal) {
+      baseBonus += 0.12;
+    }
   }
+  
+  // Fortition penalty (unless in strong positions)
   if (p !== reflex && reflex !== GAP_CHAR) {
     if (fP.continuant && !fR.continuant && !fR.nasal && !fP.lateral) {
-      if (left && FEATURE_MAP[left] && !FEATURE_MAP[left].nasal && !FEATURE_MAP[left].consonantal) bonus -= 0.15;
+      // Fortition is more acceptable word-initially or post-consonantally
+      if (!isWordInitial && !isPostConsonantal) {
+        baseBonus -= 0.15;
+      }
     }
   }
 
-  return bonus;
+  // === STEP 2: Compute environment match score (0.0–1.0) ===
+  const envMatchScore = computeEnvironmentMatchScore(p, reflex, left, right, fP, fR, matchedRules);
+
+  // === STEP 3: Scale bonus by environment match ===
+  // Formula: scaledBonus = baseBonus * (0.5 + 0.5 * envMatchScore)
+  // Range: 0.5× (no match) to 1.0× (perfect match)
+  const scalingFactor = 0.5 + (0.5 * envMatchScore);
+  const finalBonus = baseBonus * scalingFactor;
+
+  return finalBonus;
+};
+
+/**
+ * Compute a comprehensive environment match score (0.0–1.0) for a sound change.
+ * 
+ * This function evaluates how well the actual phonetic context matches the
+ * expected/attested environments for the given sound change.
+ * 
+ * Score components:
+ *   - Diachronica attestation match (40% weight)
+ *   - Rule-based expected environment (30% weight)  
+ *   - Positional naturalness (30% weight)
+ */
+const computeEnvironmentMatchScore = (
+  p: string,
+  reflex: string,
+  left: string | null,
+  right: string | null,
+  fP: DistinctiveFeatures,
+  fR: DistinctiveFeatures,
+  matchedRules: any[]
+): number => {
+  let totalScore = 0;
+  let totalWeight = 0;
+
+  // Component 1: Diachronica environment match (weight: 0.40)
+  const diachronicaEnvScore = getDiachronicaEnvironmentMatchScore(p, reflex, left, right);
+  totalScore += diachronicaEnvScore * 0.40;
+  totalWeight += 0.40;
+
+  // Component 2: Rule-based expected environment (weight: 0.30)
+  const ruleEnvScore = computeRuleEnvironmentMatch(matchedRules, left, right, fP, fR);
+  totalScore += ruleEnvScore * 0.30;
+  totalWeight += 0.30;
+
+  // Component 3: Positional naturalness (weight: 0.30)
+  const positionalScore = computePositionalNaturalnessScore(p, reflex, left, right, fP, fR);
+  totalScore += positionalScore * 0.30;
+  totalWeight += 0.30;
+
+  return totalWeight > 0 ? totalScore / totalWeight : 0.5;
+};
+
+/**
+ * Get environment match score from Diachronica data (0.0–1.0).
+ * Uses the best matching attested environment pattern.
+ */
+const getDiachronicaEnvironmentMatchScore = (
+  p: string,
+  reflex: string,
+  left: string | null,
+  right: string | null
+): number => {
+  const shiftKey = `${p}>${reflex}`;
+  const freqData = (diachronicaFreqs as any)[shiftKey];
+  if (!freqData || !freqData.envs || freqData.envs.length === 0) return 0.5; // Neutral if no data
+
+  // Find best matching environment
+  let bestMatchScore = 0;
+  for (const env of freqData.envs) {
+    if (env && env.l !== undefined && env.r !== undefined) {
+      const matchScore = matchDiachronicaEnvironment(env, left, right);
+      if (matchScore > bestMatchScore) bestMatchScore = matchScore;
+    }
+  }
+
+  // Scale: 0.0–1.0 match quality
+  return bestMatchScore;
+};
+
+/**
+ * Compute how well the actual environment matches the expected environment
+ * for the matched sound change rules.
+ */
+const computeRuleEnvironmentMatch = (
+  matchedRules: any[],
+  left: string | null,
+  right: string | null,
+  fP: DistinctiveFeatures,
+  fR: DistinctiveFeatures
+): number => {
+  if (matchedRules.length === 0) return 0.5; // Neutral if no rules matched
+
+  const isVowel = (c: string | null) => c && FEATURE_MAP[c]?.syllabic;
+  const isConsonant = (c: string | null) => c && FEATURE_MAP[c]?.consonantal && !FEATURE_MAP[c]?.syllabic;
+  const isHighFront = (c: string | null) => {
+    if (!c) return false;
+    const f = FEATURE_MAP[c];
+    return f && f.syllabic && f.high && !f.back;
+  };
+  const isRound = (c: string | null) => {
+    if (!c) return false;
+    const f = FEATURE_MAP[c];
+    return f && f.round;
+  };
+
+  let score = 0.5;
+  const ruleName = matchedRules[0].name;
+
+  // Rule-specific environment expectations
+  switch (ruleName) {
+    case 'Intervocalic Voicing':
+    case 'Intervocalic Spirantization':
+      if (isVowel(left) && isVowel(right)) score = 1.0;
+      else if (isVowel(left) || isVowel(right)) score = 0.6;
+      else score = 0.2;
+      break;
+
+    case 'Final Devoicing':
+      if (right === null || right === GAP_CHAR) score = 1.0;
+      else score = 0.3;
+      break;
+
+    case 'Velar Palatalization':
+    case 'Palatalization of Alveolars':
+    case 'Assibilation':
+      if (isHighFront(right)) score = 1.0;
+      else if (isVowel(right) && !isRound(right)) score = 0.6;
+      else score = 0.3;
+      break;
+
+    case 'Labialization':
+      if (isRound(right)) score = 1.0;
+      else score = 0.3;
+      break;
+
+    case 'Nasal Assimilation':
+      if (isConsonant(right)) score = 1.0;
+      else score = 0.4;
+      break;
+
+    case 'Umlaut (i-mutation)':
+      if (isHighFront(right)) score = 1.0;
+      else score = 0.3;
+      break;
+
+    case 'Rhotacism':
+      if (isVowel(left) && isVowel(right)) score = 1.0;
+      else score = 0.5;
+      break;
+
+    case 'Spirantization':
+    case 'Spirantization (Grimm\'s Law)':
+      // Spirantization is natural in various positions
+      score = 0.7;
+      break;
+
+    case 'Debuccalization':
+      // Debuccalization often happens word-finally or pre-consonantal
+      if (right === null || right === GAP_CHAR || isConsonant(right)) score = 0.9;
+      else score = 0.5;
+      break;
+
+    case 'Syncope':
+      if (isConsonant(left) && isConsonant(right)) score = 1.0;
+      else score = 0.4;
+      break;
+
+    case 'Apocope':
+      if (right === null || right === GAP_CHAR) score = 1.0;
+      else score = 0.2;
+      break;
+
+    case 'Prothesis':
+      if (left === null || left === GAP_CHAR) score = 1.0;
+      else score = 0.2;
+      break;
+
+    default:
+      // Default: neutral score
+      score = 0.5;
+  }
+
+  return score;
+};
+
+/**
+ * Compute positional naturalness score based on cross-linguistic
+ * patterns of sound change by position.
+ */
+const computePositionalNaturalnessScore = (
+  p: string,
+  reflex: string,
+  left: string | null,
+  right: string | null,
+  fP: DistinctiveFeatures,
+  fR: DistinctiveFeatures
+): number => {
+  const isVowel = (c: string | null) => c && FEATURE_MAP[c]?.syllabic;
+  const isConsonant = (c: string | null) => c && FEATURE_MAP[c]?.consonantal && !FEATURE_MAP[c]?.syllabic;
+  
+  const isWordInitial = left === null || left === GAP_CHAR;
+  const isWordFinal = right === null || right === GAP_CHAR;
+  const isIntervocalic = isVowel(left) && isVowel(right);
+  const isPreConsonantal = isConsonant(right);
+  const isPostConsonantal = isConsonant(left);
+
+  // Identify change type
+  const isLenition = fP.consonantal && (
+    (!fP.voice && fR.voice) ||           // Voicing
+    (!fP.continuant && fR.continuant) || // Spirantization
+    (!fP.consonantal && fR.sonorant)     // Vocalization
+  );
+  
+  const isFortition = fP.continuant && !fR.continuant && fR.consonantal;
+  const isDeletion = reflex === GAP_CHAR;
+  const isInsertion = p === GAP_CHAR || p === '';
+
+  // Position-specific naturalness
+  if (isLenition) {
+    // Lenition is most natural intervocalically, then word-finally
+    if (isIntervocalic) return 1.0;
+    if (isWordFinal) return 0.85;
+    if (isPreConsonantal) return 0.70;
+    if (isPostConsonantal) return 0.50;
+    if (isWordInitial) return 0.30; // Lenition in initial position is rare
+    return 0.60;
+  }
+
+  if (isFortition) {
+    // Fortition is most natural word-initially or post-consonantally
+    if (isWordInitial) return 0.90;
+    if (isPostConsonantal) return 0.75;
+    if (isPreConsonantal) return 0.60;
+    if (isIntervocalic) return 0.40; // Fortition between vowels is rare
+    if (isWordFinal) return 0.50;
+    return 0.60;
+  }
+
+  if (isDeletion) {
+    // Deletion patterns
+    if (isWordFinal && fP.syllabic && fP.high) return 0.95; // High vowel apocope
+    if (isWordFinal) return 0.70;
+    if (isPreConsonantal && fP.syllabic) return 0.80; // Syncope
+    if (isPreConsonantal) return 0.60;
+    if (p === 'h' || p === 'ʔ') return 0.85; // Weak segments delete easily
+    if (isIntervocalic) return 0.65;
+    if (isWordInitial) return 0.30; // Initial deletion is rare
+    return 0.50;
+  }
+
+  if (isInsertion) {
+    // Insertion patterns
+    if (isWordInitial && isConsonant(right) && right && 
+        (right.includes('s') || right.includes('ʃ'))) {
+      return 0.90; // Prothesis before sibilant
+    }
+    if (isPreConsonantal && fR.syllabic) return 0.70; // Epenthesis in clusters
+    return 0.50;
+  }
+
+  // Default: neutral
+  return 0.5;
 };
 
 /**
@@ -1994,6 +2487,143 @@ const inferCladeRepresentative = (
 // §1/3 — SOUND CHANGE ANALYSIS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * REGULARITY PENALTY FEEDBACK (§3 Enhancement)
+ * 
+ * Computes a penalty for candidate proto-forms that require sporadic 
+ * (exception-ridden) sound changes to derive the descendant forms.
+ * 
+ * This implements the Neogrammarian principle that sound change is regular
+ * (exceptionless). Candidates requiring sporadic changes are penalized,
+ * making "regular" reconstructions preferred over those with many exceptions.
+ * 
+ * Algorithm:
+ *   1. For the candidate proto-form, compute all required sound changes
+ *   2. Generalize these into sound laws
+ *   3. Check application rate of each law
+ *   4. Penalize based on sporadic laws: penalty = Σ(1 - applicationRate) × 0.3
+ */
+const computeCandidateRegularityPenalty = (
+  candidateTokens: string[],
+  alignmentMatrix: string[][],
+  topLevelForms: { name: string; word: string }[],
+  langNames: string[],
+  params: ReconstructionParams
+): number => {
+  // Quick exit if no alignment data
+  if (alignmentMatrix.length === 0 || candidateTokens.length === 0) return 0;
+
+  // Collect sound changes for this candidate
+  const candidateSoundChanges: SoundChangeNote[] = [];
+  const candidateInferredShifts: InferredShift[] = [];
+
+  // Analyze each position for each language
+  candidateTokens.forEach((pChar, col) => {
+    topLevelForms.forEach((lang, idx) => {
+      if (!alignmentMatrix[idx]) return;
+      const reflex = alignmentMatrix[idx][col];
+      if (!reflex || reflex === pChar) return; // No change
+
+      const left = col > 0 ? candidateTokens[col - 1] : null;
+      const right = col < candidateTokens.length - 1 ? candidateTokens[col + 1] : null;
+
+      // Record the change
+      const id = identifySoundChange(pChar, reflex, left, right);
+      candidateSoundChanges.push({
+        language: lang.name,
+        from: pChar === GAP_CHAR ? '∅' : pChar,
+        to: reflex === GAP_CHAR ? '∅' : reflex,
+        environment: `${left || '#'} _ ${right || '#'}`,
+        name: id.name,
+        description: id.description
+      });
+
+      // Add inferred shift for naturalness evaluation
+      if (id.name.includes('Shift') || id.name.includes('Assimilation')) {
+        const nat = evaluateNaturalness(pChar, reflex, left, right);
+        candidateInferredShifts.push({
+          language: lang.name,
+          from: pChar === GAP_CHAR ? '∅' : pChar,
+          to: reflex === GAP_CHAR ? '∅' : reflex,
+          environment: `${left || '#'} _ ${right || '#'}`,
+          naturalnessScore: nat.score,
+          typologicalCategory: nat.category
+        });
+      }
+    });
+  });
+
+  // If no changes, no penalty
+  if (candidateSoundChanges.length === 0) return 0;
+
+  // Generalize sound changes into laws
+  const candidateLaws = generalizeSoundChanges(candidateSoundChanges, candidateInferredShifts);
+
+  // Calculate penalty based on sporadic laws
+  let penalty = 0;
+  
+  for (const law of candidateLaws) {
+    if (!law.ruleString) continue;
+
+    // Count how many times this law applies in this candidate's derivation
+    const applicable = candidateSoundChanges.filter(c =>
+      c.language === law.language &&
+      law.examples.some(ex => ex.includes(`${c.from} > ${c.to}`))
+    );
+
+    // Count total potential environments for this law
+    const totalEnvironments = candidateTokens.length * topLevelForms.filter(f => f.name === law.language).length;
+    
+    if (totalEnvironments === 0) continue;
+
+    // Calculate application rate
+    const applicationRate = applicable.length / Math.max(1, totalEnvironments);
+    
+    // Flag as sporadic if rate is very low
+    if (applicationRate < 0.15 || applicable.length < 2) {
+      // Sporadic change penalty: higher penalty for lower application rates
+      const sporadicPenalty = (1 - applicationRate) * 0.3;
+      penalty += sporadicPenalty;
+      
+      // Additional penalty for single-instance sporadic changes
+      if (applicable.length === 1) {
+        penalty += 0.1; // Extra penalty for isolated exceptions
+      }
+    }
+
+    // Check for regularity in the correspondence columns
+    // If this law affects positions that are otherwise regular, that's suspicious
+    const affectedCols = candidateSoundChanges
+      .filter(c => c.language === law.language && law.examples.some(ex => ex.includes(`${c.from} > ${c.to}`)))
+      .map(c => candidateTokens.indexOf(c.from))
+      .filter(idx => idx >= 0);
+
+    // If sporadic changes cluster in specific columns, that's less suspicious
+    // than if they're scattered (scattered = more likely exceptions)
+    const uniqueCols = new Set(affectedCols);
+    if (uniqueCols.size > 1 && affectedCols.length <= uniqueCols.size) {
+      // Each sporadic change in a different column = more suspicious
+      penalty += 0.05 * uniqueCols.size;
+    }
+  }
+
+  // Additional penalty for irregular column correspondences
+  // If the candidate requires many individual phoneme changes rather than systematic ones
+  const systematicChanges = candidateLaws.filter(l => l.ruleString && !l.isSporadic).length;
+  const sporadicChanges = candidateLaws.filter(l => l.isSporadic).length;
+  
+  if (systematicChanges === 0 && sporadicChanges > 0) {
+    // All changes are sporadic = very irregular reconstruction
+    penalty += 0.2;
+  }
+
+  // Scale penalty by number of languages (more languages = higher expectation of regularity)
+  const languageScale = Math.log2(Math.max(2, topLevelForms.length)) / 3;
+  penalty *= languageScale;
+
+  return Math.min(penalty, 0.5); // Cap penalty at 0.5 to avoid over-penalizing
+};
+
 export const findPairwiseSoundChanges = (
   parentWord: string, childWord: string, childName: string, params: ReconstructionParams
 ): SoundChangeNote[] => {
@@ -2246,15 +2876,22 @@ export const reconstructProtoWord = (
     });
 
     // §5 + §7: Naturalness filters AND MDL penalty on each candidate
+    // §3: Regularity penalty feedback — penalize sporadic sound changes
     candidates = candidatePaths.map(p => {
       const phonotacticPenalty = evaluateSequenceNaturalness(p.chars);
       const inventoryPenalty   = evaluateInventorySymmetry(p.chars);
       const chainShiftPenalty  = evaluateChainShifts(p.chars, alignmentMatrix);
       const mdlComplexity      = computeMDLComplexity(p.chars, alignmentMatrix);
+      
+      // Compute regularity penalty for this candidate
+      const regularityPenalty  = computeCandidateRegularityPenalty(
+        p.chars, alignmentMatrix, topLevelForms, langNames, params
+      );
 
       const naturalnessMult = Math.exp(-(phonotacticPenalty + inventoryPenalty * 0.8 + chainShiftPenalty * 0.5) / 2);
       const naturalProb     = p.prob * naturalnessMult;
-      const mdlAdjusted     = Math.max(0, naturalProb - LAMBDA_MDL * mdlComplexity);
+      // Apply both MDL complexity penalty and regularity penalty
+      const mdlAdjusted     = Math.max(0, naturalProb - LAMBDA_MDL * mdlComplexity - regularityPenalty);
 
       const filteredChars = p.chars.filter(c => c !== GAP_CHAR);
       const form = '*' + filteredChars.join('').replace(/\.{2,}/g, '.');  // Collapse consecutive syllable boundaries
