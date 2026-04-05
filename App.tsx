@@ -1958,20 +1958,26 @@ export default function App() {
                     <optgroup label="OpenAI (via Puter)">
                       <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
                       <option value="gpt-4o">GPT-4o (Powerful)</option>
-                      <option value="o1-mini">o1-mini</option>
-                      <option value="o1-preview">o1-preview</option>
+                      <option value="o4-mini">o4 Mini</option>
+                      <option value="o3-mini">o3 Mini</option>
+                      <option value="o1">o1</option>
                     </optgroup>
                     <optgroup label="Anthropic (via Puter)">
-                      <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-                      <option value="claude-3-opus-latest">Claude 3 Opus</option>
-                      <option value="claude-3-5-haiku-latest">Claude 3.5 Haiku</option>
+                      <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                      <option value="claude-opus-4-6">Claude Opus 4.6</option>
+                      <option value="claude-3-7-sonnet">Claude 3.7 Sonnet</option>
+                      <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                      <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
                     </optgroup>
                     <optgroup label="Google (via Puter)">
-                      <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro</option>
-                      <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash</option>
+                      <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                      <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                      <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
                     </optgroup>
                     <optgroup label="xAI (via Puter)">
                       <option value="grok-beta">Grok Beta</option>
+                      <option value="grok-2">Grok 2</option>
+                      <option value="grok-3-beta">Grok 3 Beta</option>
                     </optgroup>
                     <optgroup label="DeepSeek (via Puter)">
                       <option value="deepseek-chat">DeepSeek V3</option>
