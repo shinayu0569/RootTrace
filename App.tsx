@@ -907,6 +907,11 @@ export default function App() {
   const [activeParadigmId, setActiveParadigmId] = useState<string | null>(null);
   const [showParadigmPanel, setShowParadigmPanel] = useState(false);
   
+  // Feature 6.0: Multi-Word Batch Input State
+  const [showMultiWordInput, setShowMultiWordInput] = useState(false);
+  const [multiWordText, setMultiWordText] = useState('');
+  const [batchResults, setBatchResults] = useState<any>(null);
+  
   // New Auto-Evolver settings
   const [evolverMode, setEvolverMode] = useState<'ai' | 'algorithmic'>('ai');
   const [evolverModel, setEvolverModel] = useState('gpt-4o-mini');
@@ -1358,6 +1363,155 @@ export default function App() {
     }
   };
 
+  /**
+   * Feature 6.0: Multi-Word Batch Input Handlers
+   * 
+   * Parses multi-line text input where each line represents a cognate set.
+   * Format: Language: word1, word2, word3
+   * or: word1 (Language1), word2 (Language2)
+   */
+  const parseMultiWordInput = (text: string): { gloss: string; forms: LanguageInput[] }[] => {
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    const cognateSets: { gloss: string; forms: LanguageInput[] }[] = [];
+    
+    // Try to detect format: if lines contain colons, use Language: word format
+    const hasColonFormat = lines.some(l => l.includes(':'));
+    
+    if (hasColonFormat) {
+      // Format: Language: word1, word2 OR Language: word
+      const languageMap = new Map<string, string[]>();
+      
+      lines.forEach(line => {
+        const colonIndex = line.indexOf(':');
+        if (colonIndex > 0) {
+          const langName = line.substring(0, colonIndex).trim();
+          const wordsStr = line.substring(colonIndex + 1).trim();
+          // Split by comma or space
+          const words = wordsStr.split(/[,\s]+/).filter(w => w.trim());
+          
+          if (!languageMap.has(langName)) {
+            languageMap.set(langName, []);
+          }
+          languageMap.get(langName)!.push(...words);
+        }
+      });
+      
+      // Convert to cognate sets - each word position is a gloss
+      const maxWords = Math.max(...Array.from(languageMap.values()).map(w => w.length));
+      
+      for (let i = 0; i < maxWords; i++) {
+        const forms: LanguageInput[] = [];
+        let wordIndex = 0;
+        
+        languageMap.forEach((words, langName) => {
+          if (words[i]) {
+            forms.push({
+              id: `batch-${langName}-${i}`,
+              name: langName,
+              word: words[i]
+            });
+          }
+        });
+        
+        if (forms.length >= 2) {
+          cognateSets.push({
+            gloss: `cognate-${i + 1}`,
+            forms
+          });
+        }
+      }
+    } else {
+      // Simple format: one word per line, grouped by consecutive lines
+      // Assume alternating languages or use a header row
+      const words = lines.map(l => l.trim()).filter(l => l);
+      
+      // Try to detect language from word patterns or use generic names
+      const chunkSize = Math.max(2, Math.floor(words.length / 2));
+      
+      for (let i = 0; i < words.length; i += chunkSize) {
+        const chunk = words.slice(i, i + chunkSize);
+        const forms: LanguageInput[] = chunk.map((word, idx) => ({
+          id: `batch-${i}-${idx}`,
+          name: `Language ${(i / chunkSize) + 1}`,
+          word
+        }));
+        
+        if (forms.length >= 2) {
+          cognateSets.push({
+            gloss: `cognate-${Math.floor(i / chunkSize) + 1}`,
+            forms
+          });
+        }
+      }
+    }
+    
+    return cognateSets;
+  };
+
+  const runBatchReconstruction = async () => {
+    if (!multiWordText.trim()) {
+      setErrorMsg('Please enter multiple words for batch reconstruction.');
+      return;
+    }
+    
+    const cognateSets = parseMultiWordInput(multiWordText);
+    
+    if (cognateSets.length === 0) {
+      setErrorMsg('Could not parse input. Use format: Language: word1, word2');
+      return;
+    }
+    
+    setIsProcessing(true);
+    setErrorMsg(null);
+    
+    try {
+      const { reconstructBatchEnhanced } = await import('./services/engine');
+      const result = await reconstructBatchEnhanced(
+        cognateSets,
+        paradigms.length > 0 ? paradigms : undefined,
+        method,
+        { mcmcIterations, gapPenalty, unknownCharPenalty }
+      );
+      setBatchResults(result);
+    } catch (e) {
+      console.error(e);
+      setErrorMsg('Batch reconstruction failed. Check console for details.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const applyBatchToInputs = () => {
+    if (!batchResults) return;
+    
+    // Convert batch results back to single-word inputs for display
+    const newInputs: LanguageInput[] = [];
+    let id = 1;
+    
+    // Get all unique languages from first cognate set
+    const firstSet = batchResults.individualResults?.values().next().value;
+    if (firstSet) {
+      const langNames = new Set<string>();
+      firstSet.soundChanges?.forEach((sc: SoundChangeNote) => {
+        langNames.add(sc.language);
+      });
+      
+      langNames.forEach(name => {
+        newInputs.push({
+          id: String(id++),
+          name,
+          word: ''
+        });
+      });
+    }
+    
+    if (newInputs.length > 0) {
+      setInputs(newInputs);
+      setShowMultiWordInput(false);
+      setIsDirty(true);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-rt-bg text-rt-text p-6 md:p-10 font-sans selection:bg-rt-accent/30 transition-colors duration-300">
       <header className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12 border-b border-rt-border pb-10 relative">
@@ -1511,8 +1665,150 @@ export default function App() {
               <button onClick={() => { setInputs([...inputs, { id: Date.now().toString(), name: 'New', word: '' }]); setIsDirty(true); }} className="text-[10px] font-bold bg-rt-card hover:bg-rt-input px-3 py-2 rounded-xl border border-rt-border transition-all uppercase tracking-widest text-rt-muted hover:text-rt-text">
                 Add Lang
               </button>
+              <button 
+                onClick={() => setShowMultiWordInput(!showMultiWordInput)} 
+                className={`text-[10px] font-bold px-3 py-2 rounded-xl border transition-all uppercase tracking-widest ${showMultiWordInput ? 'bg-rt-accent text-white border-rt-accent' : 'bg-rt-card hover:bg-rt-input border-rt-border text-rt-muted hover:text-rt-text'}`}
+                title="Input multiple cognate sets at once"
+              >
+                <span className="flex items-center gap-1.5">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="3" y1="9" x2="21" y2="9"/>
+                    <line x1="9" y1="21" x2="9" y2="9"/>
+                  </svg>
+                  Multi-Word
+                </span>
+              </button>
             </div>
           </div>
+          
+          {/* Feature 6.0: Multi-Word Batch Input Panel */}
+          {showMultiWordInput && (
+            <div className="mb-4 bg-rt-accent/5 border border-rt-accent/30 rounded-2xl p-4 animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-bold text-rt-accent uppercase tracking-wider flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="3" y1="9" x2="21" y2="9"/>
+                    <line x1="9" y1="21" x2="9" y2="9"/>
+                  </svg>
+                  Batch Reconstruction Mode
+                </h3>
+                <button 
+                  onClick={() => setShowMultiWordInput(false)}
+                  className="text-rt-muted hover:text-rt-text text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              <p className="text-[10px] text-rt-muted mb-2">
+                Enter words for multiple cognate sets. Format:
+                <code className="block bg-rt-input p-1.5 rounded mt-1 font-mono text-[9px]">
+                  Language: word1, word2, word3<br/>
+                  Language2: word1, word2, word3
+                </code>
+              </p>
+              
+              <textarea
+                value={multiWordText}
+                onChange={e => setMultiWordText(e.target.value)}
+                placeholder="Latin: pater, mater, frater&#10;Greek: pater, meter, phrater&#10;Sanskrit: pitr, matr, bhratr"
+                className="w-full h-32 bg-rt-input border border-rt-border rounded-xl px-3 py-2 text-xs font-mono outline-none focus:border-rt-accent text-rt-text resize-none custom-scrollbar mb-3"
+              />
+              
+              <div className="flex gap-2">
+                <button
+                  onClick={runBatchReconstruction}
+                  disabled={isProcessing || !multiWordText.trim()}
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+                    isProcessing || !multiWordText.trim()
+                      ? 'bg-rt-input text-rt-muted cursor-not-allowed'
+                      : 'bg-rt-accent hover:bg-rt-accent/90 text-white'
+                  }`}
+                >
+                  {isProcessing ? 'Reconstructing...' : 'Run Batch Reconstruction'}
+                </button>
+                
+                {batchResults && (
+                  <button
+                    onClick={() => setBatchResults(null)}
+                    className="px-3 py-2.5 bg-rt-input hover:bg-rt-border border border-rt-border rounded-xl text-rt-muted text-xs"
+                    title="Clear results"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              
+              {/* Batch Results Display */}
+              {batchResults && (
+                <div className="mt-4 space-y-3">
+                  <div className="bg-rt-card border border-rt-border rounded-xl p-3">
+                    <h4 className="text-[10px] font-bold text-rt-muted uppercase tracking-wider mb-2">
+                      Batch Results ({batchResults.individualResults?.size || 0} sets)
+                    </h4>
+                    
+                    <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-2">
+                      {Array.from(batchResults.individualResults?.entries() || []).map(([gloss, result]: [string, any], idx) => (
+                        <div 
+                          key={idx} 
+                          className="flex items-center justify-between p-2 bg-rt-input rounded-lg cursor-pointer hover:bg-rt-accent/10 transition-colors"
+                          onClick={() => {
+                            // Load this cognate set into single view
+                            const forms = batchResults.accumulatedCorrespondences ? 
+                              Object.keys(batchResults.accumulatedCorrespondences).map((key, i) => ({
+                                id: `batch-${i}`,
+                                name: key.split('-')[0] || `Lang ${i+1}`,
+                                word: result.alignmentMatrix?.[i]?.filter((c: string) => c !== '-').join('') || ''
+                              })).filter(f => f.word) : [];
+                            
+                            if (forms.length > 0) {
+                              setInputs(forms);
+                              setResult(result);
+                              setShowMultiWordInput(false);
+                            }
+                          }}
+                        >
+                          <span className="text-xs font-medium text-rt-text">{gloss}</span>
+                          <span className="text-xs font-mono text-rt-accent">{result.protoForm}</span>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    {batchResults.allomorphSets && batchResults.allomorphSets.size > 0 && (
+                      <div className="mt-3 pt-3 border-t border-rt-border">
+                        <h5 className="text-[9px] font-bold text-rt-muted uppercase tracking-wider mb-2">
+                          Detected Allomorphs ({batchResults.allomorphSets.size} lexemes)
+                        </h5>
+                        {Array.from(batchResults.allomorphSets.entries()).map(([lexeme, allomorphData]: [string, any], idx) => (
+                          <div key={idx} className="text-[10px] text-rt-text">
+                            <span className="font-medium">{lexeme}:</span>{' '}
+                            <span className="text-rt-accent">{allomorphData.allomorphs?.map((a: any) => a.protoForm).join(', ') || 'N/A'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    <button
+                      onClick={() => {
+                        setShowMultiWordInput(false);
+                        // Keep the last result as the main result
+                        const lastEntry = Array.from(batchResults.individualResults?.entries() || []).pop();
+                        if (lastEntry) {
+                          setResult(lastEntry[1]);
+                        }
+                      }}
+                      className="mt-3 w-full py-2 bg-rt-accent/10 hover:bg-rt-accent/20 border border-rt-accent/30 rounded-lg text-rt-accent text-xs font-bold transition-colors"
+                    >
+                      Apply to Main View
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          
           <div className="space-y-2 max-h-[550px] overflow-y-auto pr-3 custom-scrollbar relative">
             {/* Feature 5.7: Selection mode controls */}
             {!isSelectionMode ? (

@@ -23,6 +23,7 @@ import {
   ReconstructionMethod, DistinctiveFeatures, ReconstructionParams,
   InferredShift, GeneralizedSoundLaw,
   CognateCompatibilityFlag, PhylogeneticSpreadScore,
+  Paradigm, ParadigmCell,
 } from '../types';
 
 // Re-export ReconstructionMethod for consumers of this module
@@ -3221,4 +3222,726 @@ export const reconstructBatch = async (
     accumulatedCorrespondences,
     regularityScores
   };
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Feature 5.3: PARADIGM RECONSTRUCTION
+ * ═══════════════════════════════════════════════════════════════════════════════
+ *
+ * Reconstructs inflectional/derivational paradigms across related languages.
+ * Paradigm reconstruction operates in three stages:
+ *
+ *   Stage 1 — Stem extraction: Identify the shared stem across paradigm cells
+ *   Stage 2 — Stem reconstruction: Use standard word reconstruction on stems
+ *   Stage 3 — Affix reconstruction: Reconstruct each paradigm cell's affixes
+ *   Stage 4 — Leveling detection: Identify analogical leveling patterns
+ *
+ * Input: Array of Paradigm objects from different languages, each representing
+ *        the same lexeme (e.g., "to be" verb) with the same cell structure.
+ *
+ * Output: ReconstructedParadigm with:
+ *   - protoStem: reconstructed common stem
+ *   - protoCells: reconstructed forms for each paradigm cell
+ *   - soundChanges: per-language change analysis
+ *   - levelingFlags: detected analogical leveling patterns
+ */
+
+export interface ReconstructedParadigm {
+  protoStem: string;
+  protoStemConfidence: number;
+  protoCells: {
+    gloss: string;
+    protoForm: string;
+    confidence: number;
+    soundChanges: SoundChangeNote[];
+  }[];
+  paradigmType: 'verbal' | 'nominal' | 'adjectival' | 'pronominal';
+  levelingFlags: string[];
+  irregularCellFlags: { gloss: string; language: string; reason: string }[];
+}
+
+/**
+ * Extract the shared stem from a paradigm cell form.
+ * Uses longest common substring across all cells in a paradigm.
+ */
+const extractParadigmStem = (forms: string[]): string => {
+  if (forms.length === 0) return '';
+  if (forms.length === 1) return forms[0];
+
+  // Find longest common substring across all forms
+  const findLCS = (a: string, b: string): string => {
+    let maxLen = 0;
+    let endIndex = 0;
+    const dp: number[][] = Array(a.length + 1).fill(null).map(() => Array(b.length + 1).fill(0));
+
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        if (a[i - 1] === b[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+          if (dp[i][j] > maxLen) {
+            maxLen = dp[i][j];
+            endIndex = i;
+          }
+        }
+      }
+    }
+    return a.substring(endIndex - maxLen, endIndex);
+  };
+
+  let common = forms[0];
+  for (let i = 1; i < forms.length; i++) {
+    common = findLCS(common, forms[i]);
+    if (common.length === 0) break;
+  }
+
+  return common || forms[0]; // Fallback to first form if no common substring
+};
+
+/**
+ * Compute similarity between two strings (0-1 scale)
+ */
+const stringSimilarity = (a: string, b: string): number => {
+  if (a === b) return 1.0;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1.0;
+
+  // Simple edit distance
+  const dp: number[][] = Array(a.length + 1).fill(null).map(() => Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+
+  return 1 - (dp[a.length][b.length] / maxLen);
+};
+
+/**
+ * Detect analogical leveling within a single paradigm.
+ * Returns true if all non-irregular forms appear to be identical due to leveling.
+ */
+const detectParadigmLeveling = (
+  paradigm: Paradigm,
+  protoCellForms: Map<string, string>
+): { isLeveled: boolean; flag: string | null } => {
+  const regularForms = paradigm.cells.filter(c => !c.isIrregular).map(c => c.form);
+  if (regularForms.length < 2) return { isLeveled: false, flag: null };
+
+  // Check if all regular forms are identical (suspicious)
+  const uniqueForms = new Set(regularForms);
+  if (uniqueForms.size === 1) {
+    // All regular forms are the same - possible leveling
+    const form = regularForms[0];
+    const glosses = paradigm.cells.filter(c => !c.isIrregular).map(c => c.gloss);
+
+    // Check if proto-forms differ (confirming leveling)
+    const protoForms = glosses
+      .map(g => protoCellForms.get(g))
+      .filter((f): f is string => f !== undefined);
+    const uniqueProtos = new Set(protoForms);
+
+    if (uniqueProtos.size > 1) {
+      return {
+        isLeveled: true,
+        flag: `${paradigm.languageName}: possible paradigm leveling — '${form}' used for all cells (${glosses.join(', ')}), proto-forms differ (${Array.from(uniqueProtos).join(', ')})`
+      };
+    }
+  }
+
+  return { isLeveled: false, flag: null };
+};
+
+/**
+ * Reconstruct a proto-paradigm from descendant paradigms.
+ */
+export const reconstructParadigm = async (
+  paradigms: Paradigm[],
+  method: ReconstructionMethod = ReconstructionMethod.BAYESIAN_AI,
+  params: ReconstructionParams = { mcmcIterations: 3000, gapPenalty: 10, unknownCharPenalty: 8 }
+): Promise<ReconstructedParadigm | null> => {
+  if (paradigms.length === 0) return null;
+  if (paradigms.length === 1) {
+    // Single language - just extract stem and return as-is
+    const single = paradigms[0];
+    const stem = extractParadigmStem(single.cells.map(c => c.form));
+    return {
+      protoStem: stem,
+      protoStemConfidence: 0.5,
+      protoCells: single.cells.map(c => ({
+        gloss: c.gloss,
+        protoForm: c.form,
+        confidence: 0.5,
+        soundChanges: []
+      })),
+      paradigmType: single.paradigmType,
+      levelingFlags: [],
+      irregularCellFlags: []
+    };
+  }
+
+  // Collect all unique glosses across paradigms
+  const allGlosses = new Set<string>();
+  paradigms.forEach(p => p.cells.forEach(c => allGlosses.add(c.gloss)));
+  const glossList = Array.from(allGlosses).sort();
+
+  // Stage 1: Extract stems from each paradigm
+  const languageStems: { language: string; stem: string; forms: Map<string, string> }[] = [];
+
+  for (const paradigm of paradigms) {
+    const forms = new Map<string, string>();
+    paradigm.cells.forEach(c => forms.set(c.gloss, c.form));
+
+    const cellForms = paradigm.cells.map(c => c.form);
+    const stem = extractParadigmStem(cellForms);
+
+    languageStems.push({
+      language: paradigm.languageName,
+      stem,
+      forms
+    });
+  }
+
+  // Stage 2: Reconstruct the proto-stem
+  const stemInputs: LanguageInput[] = languageStems.map((ls, idx) => ({
+    id: `stem-${idx}`,
+    name: ls.language,
+    word: ls.stem
+  }));
+
+  const stemResult = await reconstructProtoWord(stemInputs, method, params);
+  const protoStem = stemResult.protoForm.replace(/^\*/, ''); // Remove asterisk
+
+  // Stage 3: Reconstruct each paradigm cell
+  const protoCells: ReconstructedParadigm['protoCells'] = [];
+  const levelingFlags: string[] = [];
+  const irregularCellFlags: ReconstructedParadigm['irregularCellFlags'] = [];
+
+  for (const gloss of glossList) {
+    // Collect this cell's forms across all languages
+    const cellInputs: LanguageInput[] = [];
+
+    for (let i = 0; i < paradigms.length; i++) {
+      const paradigm = paradigms[i];
+      const cell = paradigm.cells.find(c => c.gloss === gloss);
+
+      if (cell) {
+        cellInputs.push({
+          id: `${paradigm.languageId}-${gloss}`,
+          name: paradigm.languageName,
+          word: cell.form
+        });
+
+        // Flag irregular cells
+        if (cell.isIrregular) {
+          irregularCellFlags.push({
+            gloss,
+            language: paradigm.languageName,
+            reason: 'Marked as irregular in source paradigm'
+          });
+        }
+      }
+    }
+
+    if (cellInputs.length === 0) continue;
+
+    // Reconstruct this cell's proto-form
+    const cellResult = await reconstructProtoWord(cellInputs, method, params);
+
+    protoCells.push({
+      gloss,
+      protoForm: cellResult.protoForm,
+      confidence: cellResult.confidence,
+      soundChanges: cellResult.soundChanges || []
+    });
+  }
+
+  // Stage 4: Detect analogical leveling
+  const protoCellForms = new Map(protoCells.map(c => [c.gloss, c.protoForm]));
+
+  for (const paradigm of paradigms) {
+    const leveling = detectParadigmLeveling(paradigm, protoCellForms);
+    if (leveling.flag) {
+      levelingFlags.push(leveling.flag);
+    }
+  }
+
+  // Cross-paradigm leveling: check if different languages show the same pattern
+  const protoFormSet = new Set(protoCells.map(c => c.protoForm));
+  if (protoFormSet.size === 1 && protoCells.length > 1) {
+    // All proto-forms are identical - possible proto-paradigm leveling
+    levelingFlags.push(
+      `Proto-paradigm: All cells reconstruct to identical form '${Array.from(protoFormSet)[0]}' — may indicate ancestral paradigm leveling or root-only reconstruction`
+    );
+  }
+
+  return {
+    protoStem,
+    protoStemConfidence: stemResult.confidence,
+    protoCells,
+    paradigmType: paradigms[0].paradigmType,
+    levelingFlags,
+    irregularCellFlags
+  };
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Feature 5.4: ALLOMORPH RECONSTRUCTION
+ * ═══════════════════════════════════════════════════════════════════════════════
+ *
+ * Reconstructs proto-allomorphs (stem alternations) from descendant forms.
+ * Allomorphy is common in inflectional morphology:
+ *   - Ablaut (PIE *sing/sang/sung, *pod/ped)
+ *   - Consonant gradation (Finnish k ~ 0 alternation)
+ *   - Suppletion (go/went)
+ *   - Stem selection (Germanic strong verbs)
+ *
+ * This module identifies and reconstructs these patterns by:
+ *   1. Detecting allomorph sets within each language
+ *   2. Aligning allomorphs across languages
+ *   3. Reconstructing proto-allomorphs with conditioning environments
+ *   4. Validating against known typological patterns
+ */
+
+export interface AllomorphSet {
+  gloss: string;
+  allomorphs: {
+    form: string;
+    environment: string;  // Conditioning environment (e.g., "_i", "_#")
+    frequency: number;    // How often this allomorph appears
+  }[];
+}
+
+export interface ReconstructedAllomorph {
+  protoForm: string;
+  conditioning: string;        // Phonological conditioning
+  confidence: number;
+  typologicalCategory: string; // Ablaut, gradation, suppletion, etc.
+  descendantForms: { language: string; form: string; environment: string }[];
+}
+
+export interface AllomorphReconstructionResult {
+  protoLexeme: string;
+  primaryAllomorph: string;
+  allomorphs: ReconstructedAllomorph[];
+  suppletionDetected: boolean;
+  ablautPattern?: {
+    vowelAlternation: string;  // e.g., "e~o~∅"
+    positions: ('zero' | 'full' | 'lengthened')[];
+  };
+}
+
+/**
+ * Detect allomorphic alternations within a single language's paradigm.
+ * Returns a set of allomorphs for each grammatical context.
+ */
+const detectAllomorphsInParadigm = (paradigm: Paradigm): AllomorphSet => {
+  const cells = paradigm.cells.filter(c => !c.isIrregular);
+  if (cells.length < 2) {
+    return {
+      gloss: paradigm.lexeme,
+      allomorphs: cells.map(c => ({
+        form: c.form,
+        environment: c.gloss,
+        frequency: 1
+      }))
+    };
+  }
+
+  // Extract stems from each cell (remove affixes)
+  const stems = cells.map(c => ({
+    gloss: c.gloss,
+    stem: extractParadigmStem(cells.map(x => x.form)),
+    fullForm: c.form
+  }));
+
+  // Group cells by stem similarity
+  const stemGroups: Map<string, { glosses: string[]; forms: string[] }> = new Map();
+
+  for (const cell of cells) {
+    // Try to extract the stem by comparing with other forms
+    let matched = false;
+
+    for (const [stemKey, group] of stemGroups) {
+      // Check if this form shares significant substring with group
+      const lcs = findLongestCommonSubstring(cell.form, group.forms[0]);
+      if (lcs.length >= 2) {  // At least 2 characters in common
+        group.glosses.push(cell.gloss);
+        group.forms.push(cell.form);
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched) {
+      // Create new stem group
+      stemGroups.set(cell.form, {
+        glosses: [cell.gloss],
+        forms: [cell.form]
+      });
+    }
+  }
+
+  // Build allomorph set from stem groups
+  const allomorphs: AllomorphSet['allomorphs'] = [];
+
+  stemGroups.forEach((group, stem) => {
+    const environments = group.glosses.join('|');
+    allomorphs.push({
+      form: stem,
+      environment: environments,
+      frequency: group.forms.length
+    });
+  });
+
+  return {
+    gloss: paradigm.lexeme,
+    allomorphs
+  };
+};
+
+/**
+ * Find longest common substring between two strings
+ */
+const findLongestCommonSubstring = (a: string, b: string): string => {
+  let maxLen = 0;
+  let endIndex = 0;
+  const dp: number[][] = Array(a.length + 1).fill(null).map(() => Array(b.length + 1).fill(0));
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+        if (dp[i][j] > maxLen) {
+          maxLen = dp[i][j];
+          endIndex = i;
+        }
+      }
+    }
+  }
+
+  return a.substring(endIndex - maxLen, endIndex);
+};
+
+/**
+ * Classify the type of allomorphy based on phonological patterns
+ */
+const classifyAllomorphyType = (
+  allomorphs: ReconstructedAllomorph[]
+): { category: string; pattern?: string } => {
+  if (allomorphs.length < 2) return { category: 'No allomorphy' };
+
+  // Check for suppletion (completely unrelated forms)
+  const similarities: number[] = [];
+  for (let i = 0; i < allomorphs.length; i++) {
+    for (let j = i + 1; j < allomorphs.length; j++) {
+      const sim = phoneticSimilarity(allomorphs[i].protoForm, allomorphs[j].protoForm);
+      similarities.push(sim);
+    }
+  }
+  const avgSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
+
+  if (avgSimilarity < 0.3) {
+    return { category: 'Suppletion' };
+  }
+
+  // Check for ablaut (vowel alternations)
+  const vowelPatterns = allomorphs.map(a => extractVowelPattern(a.protoForm));
+  const uniqueVowels = new Set(vowelPatterns);
+
+  if (uniqueVowels.size > 1 && allomorphs.every(a => a.protoForm.length > 2)) {
+    const pattern = Array.from(uniqueVowels).join('~');
+    return { category: 'Ablaut', pattern };
+  }
+
+  // Check for consonant gradation (lenition/fortition)
+  const hasLenition = allomorphs.some(a =>
+    a.conditioning.includes('V_V') &&
+    allomorphs.some(other =>
+      other.protoForm.length > a.protoForm.length
+    )
+  );
+
+  if (hasLenition) {
+    return { category: 'Consonant gradation' };
+  }
+
+  // Check for stress-based alternations
+  const hasStressPattern = allomorphs.some(a =>
+    a.conditioning.includes('stress')
+  );
+
+  if (hasStressPattern) {
+    return { category: 'Stress-based' };
+  }
+
+  return { category: 'Morphological selection' };
+};
+
+/**
+ * Compute phonetic similarity between two forms
+ */
+const phoneticSimilarity = (a: string, b: string): number => {
+  const tokensA = tokenizeIPA(a);
+  const tokensB = tokenizeIPA(b);
+
+  const { alignedA, alignedB } = needlemanWunsch(tokensA, tokensB, 2, 3);
+
+  let matches = 0;
+  let total = 0;
+
+  for (let i = 0; i < alignedA.length; i++) {
+    if (alignedA[i] === GAP_CHAR || alignedB[i] === GAP_CHAR) continue;
+    total++;
+    if (alignedA[i] === alignedB[i]) {
+      matches++;
+    } else {
+      const dist = getPhoneticDistance(alignedA[i], alignedB[i], 2, 3);
+      if (dist < 2) matches += 0.5;  // Partial credit for similar phonemes
+    }
+  }
+
+  return total > 0 ? matches / total : 0;
+};
+
+/**
+ * Extract vowel pattern from a form
+ */
+const extractVowelPattern = (form: string): string => {
+  const tokens = tokenizeIPA(form);
+  const vowels = tokens.filter(t => {
+    const f = getEffectiveFeatures(t);
+    return f && f.syllabic;
+  });
+  return vowels.join('') || '∅';
+};
+
+/**
+ * Reconstruct proto-allomorphs from descendant paradigm sets
+ */
+export const reconstructAllomorphs = async (
+  paradigms: Paradigm[],
+  method: ReconstructionMethod = ReconstructionMethod.BAYESIAN_AI,
+  params: ReconstructionParams = { mcmcIterations: 3000, gapPenalty: 10, unknownCharPenalty: 8 }
+): Promise<AllomorphReconstructionResult | null> => {
+  if (paradigms.length === 0) return null;
+
+  const lexeme = paradigms[0].lexeme;
+
+  // Stage 1: Detect allomorphs in each language
+  const languageAllomorphs = paradigms.map(p => ({
+    language: p.languageName,
+    allomorphSet: detectAllomorphsInParadigm(p)
+  }));
+
+  // Stage 2: Collect unique allomorph forms across languages
+  const allomorphForms = new Map<string, { language: string; environment: string }[]>();
+
+  for (const { language, allomorphSet } of languageAllomorphs) {
+    for (const allomorph of allomorphSet.allomorphs) {
+      const key = allomorph.form;
+      if (!allomorphForms.has(key)) {
+        allomorphForms.set(key, []);
+      }
+      allomorphForms.get(key)!.push({
+        language,
+        environment: allomorph.environment
+      });
+    }
+  }
+
+  // Stage 3: Reconstruct each unique allomorph
+  const reconstructedAllomorphs: ReconstructedAllomorph[] = [];
+
+  for (const [form, descendants] of allomorphForms) {
+    const inputs: LanguageInput[] = descendants.map((d, idx) => ({
+      id: `allomorph-${idx}`,
+      name: d.language,
+      word: form
+    }));
+
+    const result = await reconstructProtoWord(inputs, method, params);
+
+    reconstructedAllomorphs.push({
+      protoForm: result.protoForm,
+      conditioning: descendants.map(d => d.environment).join(' | '),
+      confidence: result.confidence,
+      typologicalCategory: 'Unknown',
+      descendantForms: descendants
+    });
+  }
+
+  // Stage 4: Classify allomorphy type
+  const classification = classifyAllomorphyType(reconstructedAllomorphs);
+
+  // Update categories
+  reconstructedAllomorphs.forEach(a => {
+    a.typologicalCategory = classification.category;
+  });
+
+  // Stage 5: Determine primary allomorph (most frequent/default)
+  const primaryAllomorph = reconstructedAllomorphs
+    .sort((a, b) => b.descendantForms.length - a.descendantForms.length)[0]?.protoForm || '';
+
+  // Stage 6: Build ablaut pattern if applicable
+  let ablautPattern: AllomorphReconstructionResult['ablautPattern'] | undefined;
+  if (classification.category === 'Ablaut' && classification.pattern) {
+    const vowelPositions = reconstructedAllomorphs.map(a => {
+      const vowels = extractVowelPattern(a.protoForm);
+      if (vowels === '∅') return 'zero';
+      if (vowels.length > 1) return 'lengthened';
+      return 'full';
+    });
+
+    ablautPattern = {
+      vowelAlternation: classification.pattern,
+      positions: vowelPositions as ('zero' | 'full' | 'lengthened')[]
+    };
+  }
+
+  // Stage 7: Detect suppletion
+  const isSuppletion = classification.category === 'Suppletion';
+
+  return {
+    protoLexeme: lexeme,
+    primaryAllomorph,
+    allomorphs: reconstructedAllomorphs,
+    suppletionDetected: isSuppletion,
+    ablautPattern
+  };
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Feature 2.1 Enhanced: BATCH MODE WITH ALLOMORPH AWARENESS
+ * ═══════════════════════════════════════════════════════════════════════════════
+ *
+ * Enhanced batch reconstruction that:
+ *   1. Accumulates correspondence statistics across cognate sets
+ *   2. Detects and tracks allomorphic variation across the lexicon
+ *   3. Builds proto-allomorph reconstructions for sets showing stem alternation
+ *   4. Provides cross-linguistic regularity scores for allomorph patterns
+ */
+
+export interface EnhancedBatchResult extends BatchReconstructionResult {
+  allomorphSets: Map<string, AllomorphReconstructionResult>;  // lexeme -> allomorphs
+  allomorphRegularityScores: Map<string, number>;  // pattern -> regularity
+  paradigmReconstructions: Map<string, ReconstructedParadigm>;  // lexeme -> paradigm
+}
+
+/**
+ * Enhanced batch reconstruction with allomorph and paradigm support.
+ * 
+ * @param cognateSets Array of cognate sets (gloss + forms)
+ * @param paradigms Optional array of paradigms for allomorph detection
+ * @param method Reconstruction method
+ * @param params Reconstruction parameters
+ * @returns Enhanced batch results with allomorph and paradigm data
+ */
+export const reconstructBatchEnhanced = async (
+  cognateSets: { gloss: string; forms: LanguageInput[] }[],
+  paradigms?: Paradigm[],
+  method: ReconstructionMethod = ReconstructionMethod.BAYESIAN_AI,
+  params: ReconstructionParams = { mcmcIterations: 3000, gapPenalty: 10, unknownCharPenalty: 8 }
+): Promise<EnhancedBatchResult> => {
+  // Run standard batch reconstruction
+  const baseResult = await reconstructBatch(cognateSets, method, params);
+
+  // Initialize enhanced result containers
+  const allomorphSets = new Map<string, AllomorphReconstructionResult>();
+  const allomorphRegularityScores = new Map<string, number>();
+  const paradigmReconstructions = new Map<string, ReconstructedParadigm>();
+
+  // Process paradigms if provided
+  if (paradigms && paradigms.length > 0) {
+    // Group paradigms by lexeme
+    const paradigmsByLexeme = new Map<string, Paradigm[]>();
+    for (const p of paradigms) {
+      if (!paradigmsByLexeme.has(p.lexeme)) {
+        paradigmsByLexeme.set(p.lexeme, []);
+      }
+      paradigmsByLexeme.get(p.lexeme)!.push(p);
+    }
+
+    // Reconstruct each lexeme's paradigm
+    for (const [lexeme, lexemeParadigms] of paradigmsByLexeme) {
+      const paradigmResult = await reconstructParadigm(lexemeParadigms, method, params);
+      if (paradigmResult) {
+        paradigmReconstructions.set(lexeme, paradigmResult);
+      }
+
+      // Reconstruct allomorphs for this lexeme
+      const allomorphResult = await reconstructAllomorphs(lexemeParadigms, method, params);
+      if (allomorphResult) {
+        allomorphSets.set(lexeme, allomorphResult);
+
+        // Calculate regularity score for this allomorph pattern
+        const regularity = calculateAllomorphRegularity(allomorphResult, lexemeParadigms);
+        allomorphRegularityScores.set(lexeme, regularity);
+      }
+    }
+  }
+
+  // Compute allomorph pattern regularity across all sets
+  const allomorphPatterns = new Map<string, { count: number; languages: Set<string> }>();
+  for (const [, result] of allomorphSets) {
+    const pattern = result.ablautPattern?.vowelAlternation || result.allomorphs[0]?.typologicalCategory;
+    if (pattern) {
+      if (!allomorphPatterns.has(pattern)) {
+        allomorphPatterns.set(pattern, { count: 0, languages: new Set() });
+      }
+      const entry = allomorphPatterns.get(pattern)!;
+      entry.count++;
+      result.allomorphs.forEach(a => {
+        a.descendantForms.forEach(d => entry.languages.add(d.language));
+      });
+    }
+  }
+
+  // Regularity = number of languages showing pattern / total languages with paradigms
+  const allLanguages = new Set(paradigms?.map(p => p.languageName) || []);
+  for (const [pattern, data] of allomorphPatterns) {
+    const regularity = data.languages.size / Math.max(1, allLanguages.size);
+    allomorphRegularityScores.set(`pattern:${pattern}`, regularity);
+  }
+
+  return {
+    ...baseResult,
+    allomorphSets,
+    allomorphRegularityScores,
+    paradigmReconstructions
+  };
+};
+
+/**
+ * Calculate regularity score for an allomorph set based on cross-linguistic consistency
+ */
+const calculateAllomorphRegularity = (
+  allomorphResult: AllomorphReconstructionResult,
+  paradigms: Paradigm[]
+): number => {
+  const totalLanguages = paradigms.length;
+  if (totalLanguages === 0) return 0;
+
+  // Count how many languages preserve the expected allomorph count
+  let consistentLanguages = 0;
+  const expectedAllomorphCount = allomorphResult.allomorphs.length;
+
+  for (const paradigm of paradigms) {
+    const detected = detectAllomorphsInParadigm(paradigm);
+    // Allow some variation (±1 allomorph) due to leveling or innovation
+    if (Math.abs(detected.allomorphs.length - expectedAllomorphCount) <= 1) {
+      consistentLanguages++;
+    }
+  }
+
+  return consistentLanguages / totalLanguages;
 };
