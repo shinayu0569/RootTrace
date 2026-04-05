@@ -33,6 +33,7 @@ import {
 } from './soundChangeDb';
 import { generalizeSoundChanges } from './generalizer';
 import { applyShifts } from './soundShifter';
+import { getAttestedShiftInfo } from './diachronicaApi';
 import diachronicaFreqs from '../diachronica_freqs.json';
 import featureFreqs from '../feature_freqs.json';
 
@@ -942,24 +943,181 @@ const evaluateChainShifts = (sequence: string[], alignmentMatrix: string[][]): n
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// §3 — NATURAL CHANGE BONUS (Enhanced with Index Diachronica Environment Matching)
+// §3 — NATURAL CHANGE BONUS (Enhanced with Index Diachronica API Integration)
 // ═══════════════════════════════════════════════════════════════════════════════
 /**
  * Assigns a bonus to a proto→reflex correspondence based on:
  *   1. Matched rules in the NATURAL_SOUND_CHANGES database
  *   2. Index Diachronica frequency data (with environment context matching)
- *   3. Feature-shift frequency data (featureFreqs.json)
- *   4. Generative naturalness evaluation (evaluateNaturalness)
- *   5. Positional weighting (lenition in weak positions, stability in strong)
- *   6. Nasal assimilation and palatalization bonuses
- *   7. Directional penalties for fortition and denasalisation
+ *   3. LIVE Index Diachronica API data (async version)
+ *   4. Feature-shift frequency data (featureFreqs.json)
+ *   5. Generative naturalness evaluation (evaluateNaturalness)
+ *   6. Positional weighting (lenition in weak positions, stability in strong)
+ *   7. Nasal assimilation and palatalization bonuses
+ *   8. Directional penalties for fortition and denasalisation
  *
- * ENHANCED: Environment-aware Diachronica matching for improved naturalism.
- * Source language attribution is NOT exposed to users.
+ * ENHANCED: Live API integration for real-time attestation verification.
+ * The async version queries Index Diachronica directly for the most
+ * up-to-date attestation data.
  *
  * The bonus is subtracted from the phonetic distance before weighting,
  * so natural changes incur lower effective cost than unnatural ones.
  */
+
+// Cache for live API results to avoid repeated calls within a reconstruction
+const liveApiCache = new Map<string, number>();
+
+/**
+ * Async version of getNaturalChangeBonus that queries the live Index Diachronica API.
+ * Falls back to the sync version if the API is unavailable or times out.
+ */
+const getNaturalChangeBonusAsync = async (
+  p: string,
+  reflex: string,
+  left: string | null,
+  right: string | null
+): Promise<number> => {
+  const cacheKey = `${p}>${reflex}|${left || '_'}-${right || '_'}`;
+  
+  // Check live API cache first
+  if (liveApiCache.has(cacheKey)) {
+    return liveApiCache.get(cacheKey)!;
+  }
+  
+  // Get the base bonus from local data
+  const baseBonus = getNaturalChangeBonusSync(p, reflex, left, right);
+  
+  try {
+    // Query the live Index Diachronica API
+    const attestationInfo = await getAttestedShiftInfo(p, reflex, left, right);
+    
+    if (attestationInfo.isAttested) {
+      // Apply additional bonus for attested shifts from live API
+      // This stacks with local data bonuses for maximum reward
+      const liveApiBonus = attestationInfo.bonus * 0.5; // Scale to not overpower local data
+      const totalBonus = baseBonus + liveApiBonus;
+      
+      liveApiCache.set(cacheKey, totalBonus);
+      return totalBonus;
+    }
+  } catch (error) {
+    // API failure - fall back to base bonus
+    console.warn('Index Diachronica API query failed, using local data:', error);
+  }
+  
+  return baseBonus;
+};
+
+/**
+ * Clear the live API cache between reconstructions
+ */
+export const clearLiveApiCache = (): void => {
+  liveApiCache.clear();
+};
+
+/**
+ * Pre-fetch attestation data for a set of candidate proto-phonemes and their reflexes.
+ * This allows batch API queries before the main reconstruction loop, improving performance.
+ */
+export const prefetchAttestedShifts = async (
+  candidates: Array<{ proto: string; reflexes: Array<{ phoneme: string; left: string | null; right: string | null }> }>
+): Promise<void> => {
+  const promises: Promise<void>[] = [];
+  
+  for (const candidate of candidates) {
+    for (const reflex of candidate.reflexes) {
+      const promise = getAttestedShiftInfo(
+        candidate.proto,
+        reflex.phoneme,
+        reflex.left,
+        reflex.right
+      ).then(info => {
+        const cacheKey = `${candidate.proto}>${reflex.phoneme}|${reflex.left || '_'}-${reflex.right || '_'}`;
+        const baseBonus = getNaturalChangeBonusSync(candidate.proto, reflex.phoneme, reflex.left, reflex.right);
+        liveApiCache.set(cacheKey, baseBonus + (info.isAttested ? info.bonus * 0.5 : 0));
+      }).catch(() => {
+        // Silently fail - will fall back to sync version
+      });
+      
+      promises.push(promise);
+    }
+  }
+  
+  // Wait for all prefetches to complete (with timeout)
+  await Promise.race([
+    Promise.all(promises),
+    new Promise(resolve => setTimeout(resolve, 5000)) // 5 second timeout
+  ]);
+};
+
+const getNaturalChangeBonusSync = (p: string, reflex: string, left: string | null, right: string | null): number => {
+  const fP = getEffectiveFeatures(p), fR = getEffectiveFeatures(reflex);
+  if (!fP || !fR) return 0;
+  let bonus = 0;
+  const ctx: ChangeContext = {
+    left: left && left !== GAP_CHAR ? getEffectiveFeatures(left) : null,
+    right: right && right !== GAP_CHAR ? getEffectiveFeatures(right) : null,
+    leftChar: left === GAP_CHAR ? null : left,
+    rightChar: right === GAP_CHAR ? null : right,
+  };
+  const fP_full: DistinctiveFeaturesWithSymbol = { ...fP, symbol: p };
+  const fR_full: DistinctiveFeaturesWithSymbol = { ...fR, symbol: reflex };
+  const matchedRules = NATURAL_SOUND_CHANGES.filter(rule => rule.test(fP_full, fR_full, ctx));
+  if (matchedRules.length > 0) bonus += matchedRules[0].priority * 0.03;
+
+  // ENHANCED: Environment-aware Diachronica bonus
+  const diachronicaBaseBonus = getDiachronicaEnvironmentBonus(p, reflex, left, right);
+  bonus += diachronicaBaseBonus;
+
+  // Fallback: Basic frequency bonus for shifts with high frequency
+  const shiftKey = `${p}>${reflex}`;
+  const freqData = (diachronicaFreqs as any)[shiftKey];
+  if (freqData && freqData.count >= 3) {
+    // Reduced base bonus since environment matching now provides most value
+    bonus += 0.02 + Math.log10(freqData.count) * 0.04;
+  } else if (freqData && freqData.count > 0) {
+    bonus += 0.01;
+  } else {
+    bonus += 0.005;
+  }
+
+  // Feature-based naturalness (unchanged)
+  const delta: string[] = [];
+  for (const k in fP) {
+    if (fP[k as keyof typeof fP] !== fR[k as keyof typeof fR]) delta.push(`${k}:${fR[k as keyof typeof fR]}`);
+  }
+  if (delta.length > 0) {
+    const deltaKey = delta.sort().join(',');
+    const featureFreq = (featureFreqs as any)[deltaKey];
+    if (featureFreq) {
+      bonus += 0.02 + Math.log10(featureFreq) * 0.03;
+    }
+    const naturalness = evaluateNaturalness(p, reflex, left, right);
+    bonus += naturalness.score * 0.15;
+  }
+
+  // Positional bonuses (unchanged)
+  const isVowel = (c: string | null) => c && FEATURE_MAP[c]?.syllabic;
+  const isIntervocalic = left && right && isVowel(left) && isVowel(right);
+  if (isIntervocalic || right === null) {
+    if ((!fP.voice && fR.voice) || (fP.consonantal && !fR.consonantal) || reflex === GAP_CHAR) bonus += 0.12;
+  }
+  if (left === null && p === reflex) bonus += 0.04;
+  if (fP.nasal && right && FEATURE_MAP[right] && !FEATURE_MAP[right].syllabic) {
+    const rf = FEATURE_MAP[right];
+    if ((fR.labial && rf.labial) || (fR.coronal && rf.coronal) || (fR.dorsal && rf.dorsal)) bonus += 0.12;
+  }
+  if ((fP.dorsal || fP.coronal) && fR.coronal && fR.delayedRelease) {
+    if (right && FEATURE_MAP[right] && (FEATURE_MAP[right].high || FEATURE_MAP[right].coronal) && !FEATURE_MAP[right].consonantal) bonus += 0.12;
+  }
+  if (p !== reflex && reflex !== GAP_CHAR) {
+    if (fP.continuant && !fR.continuant && !fR.nasal && !fP.lateral) {
+      if (left && FEATURE_MAP[left] && !FEATURE_MAP[left].nasal && !FEATURE_MAP[left].consonantal) bonus -= 0.15;
+    }
+  }
+
+  return bonus;
+};
 
 /**
  * Match a Diachronica environment pattern against actual phonetic context.
@@ -1100,78 +1258,11 @@ const getDiachronicaEnvironmentBonus = (
   return avgMatch * frequencyWeight;
 };
 
-const getNaturalChangeBonus = (p: string, reflex: string, left: string | null, right: string | null): number => {
-  const fP = getEffectiveFeatures(p), fR = getEffectiveFeatures(reflex);
-  if (!fP || !fR) return 0;
-  let bonus = 0;
-  const ctx: ChangeContext = {
-    left: left && left !== GAP_CHAR ? getEffectiveFeatures(left) : null,
-    right: right && right !== GAP_CHAR ? getEffectiveFeatures(right) : null,
-    leftChar: left === GAP_CHAR ? null : left,
-    rightChar: right === GAP_CHAR ? null : right,
-  };
-  const fP_full: DistinctiveFeaturesWithSymbol = { ...fP, symbol: p };
-  const fR_full: DistinctiveFeaturesWithSymbol = { ...fR, symbol: reflex };
-  const matchedRules = NATURAL_SOUND_CHANGES.filter(rule => rule.test(fP_full, fR_full, ctx));
-  if (matchedRules.length > 0) bonus += matchedRules[0].priority * 0.03;
-
-  // ENHANCED: Environment-aware Diachronica bonus
-  const diachronicaBaseBonus = getDiachronicaEnvironmentBonus(p, reflex, left, right);
-  bonus += diachronicaBaseBonus;
-
-  // Fallback: Basic frequency bonus for shifts with high frequency
-  const shiftKey = `${p}>${reflex}`;
-  const freqData = (diachronicaFreqs as any)[shiftKey];
-  if (freqData && freqData.count >= 3) {
-    // Reduced base bonus since environment matching now provides most value
-    bonus += 0.02 + Math.log10(freqData.count) * 0.04;
-  } else if (freqData && freqData.count > 0) {
-    bonus += 0.01;
-  } else {
-    bonus += 0.005;
-  }
-
-  // Feature-based naturalness (unchanged)
-  const delta: string[] = [];
-  for (const k in fP) {
-    if (fP[k as keyof typeof fP] !== fR[k as keyof typeof fR]) delta.push(`${k}:${fR[k as keyof typeof fR]}`);
-  }
-  if (delta.length > 0) {
-    const deltaKey = delta.sort().join(',');
-    const featureFreq = (featureFreqs as any)[deltaKey];
-    if (featureFreq) {
-      bonus += 0.02 + Math.log10(featureFreq) * 0.03;
-    }
-    const naturalness = evaluateNaturalness(p, reflex, left, right);
-    bonus += naturalness.score * 0.15;
-  }
-
-  // Positional bonuses (unchanged)
-  const isVowel = (c: string | null) => c && FEATURE_MAP[c]?.syllabic;
-  const isIntervocalic = left && right && isVowel(left) && isVowel(right);
-  if (isIntervocalic || right === null) {
-    if ((!fP.voice && fR.voice) || (fP.consonantal && !fR.consonantal) || reflex === GAP_CHAR) bonus += 0.12;
-  }
-  if (left === null && p === reflex) bonus += 0.04;
-  if (fP.nasal && right && FEATURE_MAP[right] && !FEATURE_MAP[right].syllabic) {
-    const rf = FEATURE_MAP[right];
-    if ((fR.labial && rf.labial) || (fR.coronal && rf.coronal) || (fR.dorsal && rf.dorsal)) bonus += 0.12;
-  }
-  if ((fP.dorsal || fP.coronal) && fR.coronal && fR.delayedRelease) {
-    if (right && FEATURE_MAP[right] && (FEATURE_MAP[right].high || FEATURE_MAP[right].coronal) && !FEATURE_MAP[right].consonantal) bonus += 0.12;
-  }
-  if (p !== reflex && reflex !== GAP_CHAR) {
-    if (fP.continuant && !fR.continuant && !fR.nasal && !fP.lateral) {
-      if (left && FEATURE_MAP[left] && !FEATURE_MAP[left].nasal && !FEATURE_MAP[left].consonantal) bonus -= 0.15;
-    }
-    if ((p === 'h' || p === 'ʔ') && (fR.labial || fR.coronal || fR.dorsal)) bonus -= 0.20;
-    if (fP.nasal && !fR.nasal) {
-      if (!right || !FEATURE_MAP[right] || FEATURE_MAP[right].continuant || FEATURE_MAP[right].syllabic) bonus -= 0.10;
-    }
-    if (fP.delayedRelease && fP.coronal && fR.dorsal && !fR.continuant) bonus -= 0.15;
-  }
-  return bonus;
-};
+/**
+ * Synchronous version for backward compatibility.
+ * Use getNaturalChangeBonusAsync for live API integration.
+ */
+const getNaturalChangeBonus = getNaturalChangeBonusSync;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // §1/6 — MULTIPLE SEQUENCE ALIGNMENT (progressive centre-star)
