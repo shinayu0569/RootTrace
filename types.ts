@@ -229,10 +229,25 @@ export interface ReconstructionResult {
   regularityScores?: number[];
 
   /**
-   * §1 — Correspondence table for accumulated statistics.
-   * Maps column keys to phoneme occurrence counts across languages.
+   * §8 — Per-segment confidence tiers (naturalism enhancement).
+   * Breaks down the scalar confidence into segment-level tiers:
+   *   secure (>0.85), probable (0.65-0.85), uncertain (0.45-0.65), highly_uncertain (<0.45)
+   * Each segment includes alternative reconstructions with their probabilities.
    */
-  correspondenceTable?: { [columnKey: string]: { [phoneme: string]: number } };
+  segmentConfidence?: SegmentConfidence[];
+}
+
+/**
+ * Feature 5.5: Per-Segment Confidence Tiering
+ * Provides granular confidence information for each proto-segment.
+ */
+export interface SegmentConfidence {
+  segment: string;
+  tier: 'secure' | 'probable' | 'uncertain' | 'highly_uncertain';
+  probability: number;
+  alternatives: { phoneme: string; probability: number }[];
+  supportingLanguages: string[];
+  conflictingLanguages: string[];
 }
 
 export interface SoundChangeNote {

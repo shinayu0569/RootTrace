@@ -589,13 +589,13 @@ const applyFloorThreshold = (rawWeights: number[]): number[] => {
 
 /** Full W(Lᵢ) = Wt × Wc × Wr, then apply floor threshold across all languages */
 const computeFullWeights = (
-  topLevelForms: { year: number }[],
+  topLevelForms: { year: number; name: string }[],
   alignmentMatrix: string[][],
   protoYear: number,
   protoTokens: string[]  // Current proto-form for conservatism calculation
 ): number[] => {
   const raw = topLevelForms.map((f, idx) =>
-    computeWt(f.year, protoYear) * computeWc(idx, alignmentMatrix, protoTokens) * computeWr(f.year)
+    computeWt(f.year, protoYear) * computeWcWithPriors(idx, f.name, alignmentMatrix, protoTokens) * computeWr(f.year)
   );
   return applyFloorThreshold(raw);
 };
@@ -1128,8 +1128,328 @@ const evaluateChainShifts = (sequence: string[], alignmentMatrix: string[][]): n
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// §3 — NATURAL CHANGE BONUS (Enhanced with Index Diachronica API Integration)
+// §5b — ADDITIONAL NATURALISM ENHANCEMENTS (Algorithm Analysis Implementation)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * NATURAL CLASS GENERALIZATION BONUS
+ * 
+ * Detects when multiple sound shifts form a consistent pattern by natural class.
+ * Example: if all labials weaken, all coronals palatalize → bonus for elegance.
+ * 
+ * This rewards reconstructions where phoneme changes follow systematic 
+ * class-level patterns rather than arbitrary individual changes.
+ */
+const NATURAL_CLASSES = {
+  labial: (f: DistinctiveFeatures) => f.labial,
+  coronal: (f: DistinctiveFeatures) => f.coronal,
+  dorsal: (f: DistinctiveFeatures) => f.dorsal,
+  voiced: (f: DistinctiveFeatures) => f.voice,
+  voiceless: (f: DistinctiveFeatures) => !f.voice && f.consonantal,
+  stop: (f: DistinctiveFeatures) => f.consonantal && !f.continuant,
+  fricative: (f: DistinctiveFeatures) => f.continuant && !f.sonorant,
+  nasal: (f: DistinctiveFeatures) => f.nasal,
+  liquid: (f: DistinctiveFeatures) => f.sonorant && !f.nasal && !f.syllabic,
+  highVowel: (f: DistinctiveFeatures) => f.syllabic && f.high,
+  lowVowel: (f: DistinctiveFeatures) => f.syllabic && f.low,
+};
+
+const evaluateNaturalClassPattern = (
+  sequence: string[],
+  alignmentMatrix: string[][]
+): number => {
+  let bonus = 0;
+  
+  for (let langIdx = 0; langIdx < alignmentMatrix.length; langIdx++) {
+    const descendantWord = alignmentMatrix[langIdx];
+    
+    // Collect all shifts for this language
+    const shifts: { proto: string; reflex: string; protoFeatures: DistinctiveFeatures | null; reflexFeatures: DistinctiveFeatures | null }[] = [];
+    
+    for (let col = 0; col < sequence.length; col++) {
+      const proto = sequence[col];
+      const reflex = descendantWord?.[col];
+      if (!reflex || proto === GAP_CHAR || reflex === GAP_CHAR || proto === reflex) continue;
+      
+      shifts.push({
+        proto,
+        reflex,
+        protoFeatures: getEffectiveFeatures(proto),
+        reflexFeatures: getEffectiveFeatures(reflex)
+      });
+    }
+    
+    if (shifts.length < 2) continue; // Need at least 2 shifts to detect pattern
+    
+    // Check each natural class for consistent behavior
+    for (const [className, classTest] of Object.entries(NATURAL_CLASSES)) {
+      const classShifts = shifts.filter(s => s.protoFeatures && classTest(s.protoFeatures));
+      
+      if (classShifts.length >= 2) {
+        // Check if all shifts in this class have the same operation
+        const operations = classShifts.map(s => {
+          if (!s.protoFeatures || !s.reflexFeatures) return null;
+          
+          // Identify what changed
+          if (s.protoFeatures.voice !== s.reflexFeatures.voice) return 'voicing';
+          if (s.protoFeatures.continuant !== s.reflexFeatures.continuant) return 'spirantization';
+          if (s.protoFeatures.labial !== s.reflexFeatures.labial) return 'labialization';
+          if (s.protoFeatures.coronal !== s.reflexFeatures.coronal) return 'coronalization';
+          if (s.protoFeatures.dorsal !== s.reflexFeatures.dorsal) return 'velarization';
+          if (s.protoFeatures.nasal !== s.reflexFeatures.nasal) return 'nasalization';
+          if (s.protoFeatures.syllabic !== s.reflexFeatures.syllabic) return 'vocalization';
+          return 'other';
+        });
+        
+        // Check if all operations are the same
+        const uniqueOps = new Set(operations.filter(o => o !== null));
+        if (uniqueOps.size === 1 && !uniqueOps.has('other')) {
+          // Consistent class-level pattern detected!
+          bonus += 0.15 * Math.min(classShifts.length, 4); // Cap at 0.6
+        }
+      }
+    }
+  }
+  
+  return Math.min(bonus, 0.5); // Cap total bonus
+};
+
+/**
+ * POST-PROCESSING PLAUSIBILITY FILTER
+ * 
+ * Validates proto-forms against cross-linguistic phonological universals.
+ * Preforms that violate typologically rare patterns are penalized.
+ */
+interface UniversalConstraint {
+  name: string;
+  test: (form: string[], features: (DistinctiveFeatures | null)[]) => boolean;
+  violationPenalty: number;
+}
+
+const UNIVERSAL_CONSTRAINTS: UniversalConstraint[] = [
+  {
+    name: 'No initial geminates',
+    test: (form, features) => {
+      if (form.length < 2) return true;
+      const f1 = features[0], f2 = features[1];
+      // Check for geminate (same place, same manner)
+      return !(f1 && f2 && 
+        f1.consonantal && f2.consonantal &&
+        f1.labial === f2.labial &&
+        f1.coronal === f2.coronal &&
+        f1.dorsal === f2.dorsal &&
+        f1.continuant === f2.continuant);
+    },
+    violationPenalty: 1.0
+  },
+  {
+    name: 'Has at least one vowel',
+    test: (form, features) => features.some(f => f?.syllabic),
+    violationPenalty: 0.8
+  },
+  {
+    name: 'No vowel-less sequences > 3',
+    test: (form, features) => {
+      let maxConsonantRun = 0;
+      let currentRun = 0;
+      for (const f of features) {
+        if (f?.consonantal) {
+          currentRun++;
+          maxConsonantRun = Math.max(maxConsonantRun, currentRun);
+        } else {
+          currentRun = 0;
+        }
+      }
+      return maxConsonantRun <= 3;
+    },
+    violationPenalty: 0.6
+  },
+  {
+    name: 'Sonority rises to nucleus',
+    test: (form, features) => {
+      // Find first vowel
+      const firstVowelIdx = features.findIndex(f => f?.syllabic);
+      if (firstVowelIdx <= 0) return true;
+      
+      // Check that sonority generally rises toward nucleus
+      const sonorities = features.slice(0, firstVowelIdx).map(f => {
+        if (!f) return 0;
+        if (f.sonorant && !f.syllabic) return 8;
+        if (f.nasal) return 7;
+        if (f.continuant && f.voice) return 6;
+        if (f.continuant) return 5;
+        if (f.voice) return 2;
+        return 1;
+      });
+      
+      // Count sonority drops (should be minimal in onset)
+      let drops = 0;
+      for (let i = 1; i < sonorities.length; i++) {
+        if (sonorities[i] < sonorities[i-1]) drops++;
+      }
+      return drops <= 1; // Allow one drop for complex clusters
+    },
+    violationPenalty: 0.5
+  },
+  {
+    name: 'Consonant/vowel ratio balanced',
+    test: (form, features) => {
+      const consonants = features.filter(f => f?.consonantal).length;
+      const vowels = features.filter(f => f?.syllabic).length;
+      if (vowels === 0) return false;
+      return consonants / vowels <= 5.0;
+    },
+    violationPenalty: 0.4
+  }
+];
+
+const evaluateUniversalConstraints = (sequence: string[]): number => {
+  const features = sequence.map(c => c !== GAP_CHAR ? getEffectiveFeatures(c) : null);
+  
+  let totalPenalty = 0;
+  for (const constraint of UNIVERSAL_CONSTRAINTS) {
+    if (!constraint.test(sequence, features)) {
+      totalPenalty += constraint.violationPenalty;
+    }
+  }
+  
+  return totalPenalty;
+};
+
+/**
+ * FAMILY CONSERVATISM PRIORS
+ * 
+ * Pre-defined conservatism weights for known historically conservative languages.
+ * These initialize Wc before dynamic adjustment based on phonetic distance.
+ */
+const CONSERVATISM_PRIORS: Record<string, Record<string, number>> = {
+  'indo_european': {
+    'Lithuanian': 1.3,
+    'Latvian': 1.2,
+    'Vedic Sanskrit': 1.2,
+    'Sanskrit': 1.15,
+    'Hittite': 1.4,
+    'Ancient Greek': 1.1,
+    'Greek': 1.05,
+    'Latin': 1.1,
+    'Old Church Slavonic': 1.15,
+    'Old Persian': 1.1,
+    'Avestan': 1.25,
+    'Gothic': 1.1,
+    'Old Icelandic': 1.05,
+    'Old Irish': 1.1,
+  },
+  'uralic': {
+    'Finnish': 1.2,
+    'Estonian': 1.1,
+    'Hungarian': 1.05,
+    'Sami': 1.15,
+    'Mordvin': 1.1,
+  },
+  'sino_tibetan': {
+    'Classical Tibetan': 1.2,
+    'Old Chinese': 1.3,
+    'Middle Chinese': 1.15,
+  },
+  'semitic': {
+    'Classical Arabic': 1.15,
+    'Hebrew': 1.1,
+    'Aramaic': 1.2,
+    'Geʿez': 1.25,
+    'Akkadian': 1.2,
+    'Ugaritic': 1.3,
+  },
+  'turkic': {
+    'Old Turkic': 1.2,
+    'Chuvash': 1.25,
+    'Yakut': 1.15,
+  },
+  'mongolic': {
+    'Middle Mongol': 1.2,
+    'Written Mongol': 1.15,
+  },
+  'tungusic': {
+    'Evenki': 1.15,
+    'Even': 1.1,
+  },
+  'dravidian': {
+    'Tamil': 1.2,
+    'Kannada': 1.15,
+    'Telugu': 1.1,
+    'Malayalam': 1.15,
+    'Brahui': 1.2,
+  },
+  'austronesian': {
+    'Proto-Austronesian': 1.0, // Baseline
+    'Malay': 1.05,
+    'Javanese': 1.05,
+    'Tagalog': 1.1,
+    'Fijian': 1.15,
+    'Hawaiian': 1.1,
+  },
+  'afroasiatic': {
+    'Egyptian': 1.25,
+    'Coptic': 1.15,
+    'Berber': 1.2,
+    'Hausa': 1.05,
+  }
+};
+
+/**
+ * Get conservatism prior for a language based on its family.
+ * Returns 1.0 if no prior is defined (neutral).
+ */
+const getConservatismPrior = (langName: string, familyHint?: string): number => {
+  // Normalize language name for matching
+  const normalizedName = langName.replace(/^\*?/, '').replace(/\s*\(Spelling\)$/, '').trim();
+  
+  // If family hint provided, check that family first
+  if (familyHint && CONSERVATISM_PRIORS[familyHint]) {
+    const prior = CONSERVATISM_PRIORS[familyHint][normalizedName];
+    if (prior) return prior;
+  }
+  
+  // Search all families
+  for (const [family, languages] of Object.entries(CONSERVATISM_PRIORS)) {
+    const prior = languages[normalizedName];
+    if (prior) return prior;
+    
+    // Try partial match
+    for (const [lang, p] of Object.entries(languages)) {
+      if (normalizedName.toLowerCase().includes(lang.toLowerCase()) ||
+          lang.toLowerCase().includes(normalizedName.toLowerCase())) {
+        return p;
+      }
+    }
+  }
+  
+  return 1.0; // Default: neutral
+};
+
+/**
+ * Enhanced Wc computation with family conservatism priors.
+ * Initializes Wc with prior knowledge before dynamic adjustment.
+ */
+const computeWcWithPriors = (
+  langIdx: number,
+  langName: string,
+  alignmentMatrix: string[][],
+  protoTokens: string[],
+  familyHint?: string
+): number => {
+  // Get base dynamic conservatism
+  const dynamicWc = computeWc(langIdx, alignmentMatrix, protoTokens);
+  
+  // Apply family prior (if any)
+  const prior = getConservatismPrior(langName, familyHint);
+  
+  // Blend prior with dynamic: 30% prior, 70% dynamic (based on evidence)
+  // For unattested languages, rely more on prior
+  const priorWeight = 0.3;
+  const blendedWc = prior * priorWeight + dynamicWc * (1 - priorWeight);
+  
+  return Math.max(0.30, Math.min(1.5, blendedWc)); // Allow up to 1.5 for very conservative languages
+};
 /**
  * Assigns a bonus to a proto→reflex correspondence based on:
  *   1. Matched rules in the NATURAL_SOUND_CHANGES database
@@ -2884,12 +3204,19 @@ export const reconstructProtoWord = (
       const chainShiftPenalty  = evaluateChainShifts(p.chars, alignmentMatrix);
       const mdlComplexity      = computeMDLComplexity(p.chars, alignmentMatrix);
       
+      // NEW: Natural class pattern bonus (rewards systematic class-level changes)
+      const naturalClassBonus  = evaluateNaturalClassPattern(p.chars, alignmentMatrix);
+      
+      // NEW: Universal constraints penalty (typological impossibility filter)
+      const universalPenalty   = evaluateUniversalConstraints(p.chars);
+      
       // Compute regularity penalty for this candidate
       const regularityPenalty  = computeCandidateRegularityPenalty(
         p.chars, alignmentMatrix, topLevelForms, langNames, params
       );
 
-      const naturalnessMult = Math.exp(-(phonotacticPenalty + inventoryPenalty * 0.8 + chainShiftPenalty * 0.5) / 2);
+      // Combined naturalness multiplier with new bonuses
+      const naturalnessMult = Math.exp(-(phonotacticPenalty + inventoryPenalty * 0.8 + chainShiftPenalty * 0.5 + universalPenalty - naturalClassBonus) / 2);
       const naturalProb     = p.prob * naturalnessMult;
       // Apply both MDL complexity penalty and regularity penalty
       const mdlAdjusted     = Math.max(0, naturalProb - LAMBDA_MDL * mdlComplexity - regularityPenalty);
@@ -3102,6 +3429,15 @@ export const reconstructProtoWord = (
     );
   }
 
+  // NEW: Compute per-segment confidence tiers
+  const segmentConfidence = computePerSegmentConfidence(
+    reconstructedTokens,
+    distributionArr,
+    alignmentMatrix,
+    langNames,
+    regularityScores
+  );
+
   // ── Compile and return all results ────────────────────────────────────────
   return {
     protoForm,
@@ -3137,6 +3473,9 @@ export const reconstructProtoWord = (
     mergerEvents: allMergers,
     loanwordSignals: allLoanSignals,
     correspondenceTable,
+
+    // NEW: Per-segment confidence tiers
+    segmentConfidence,
   } as any;
 };
 
@@ -3944,4 +4283,210 @@ const calculateAllomorphRegularity = (
   }
 
   return consistentLanguages / totalLanguages;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §5c — PER-SEGMENT CONFIDENCE TIERS & TONE CONTOUR NATURALNESS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Compute per-segment confidence tiers.
+ * Breaks down the scalar confidence into segment-level information:
+ *   - secure: probability > 0.85
+ *   - probable: probability 0.65-0.85
+ *   - uncertain: probability 0.45-0.65
+ *   - highly_uncertain: probability < 0.45
+ * 
+ * Each segment includes alternatives with probabilities and supporting/conflicting
+ * language information.
+ */
+const computePerSegmentConfidence = (
+  protoTokens: string[],
+  distributionArr: { [phoneme: string]: number }[],
+  alignmentMatrix: string[][],
+  langNames: string[],
+  regularityScores: number[]
+): SegmentConfidence[] => {
+  if (!protoTokens || protoTokens.length === 0) return [];
+
+  return protoTokens.map((segment, idx) => {
+    const dist = distributionArr[idx] || {};
+    const regularity = regularityScores[idx] || 0.5;
+    
+    // Get probability of the selected segment
+    const segmentProb = dist[segment] || 0;
+    
+    // Get alternatives (other phonemes in distribution)
+    const alternatives = Object.entries(dist)
+      .filter(([phoneme]) => phoneme !== segment && phoneme !== GAP_CHAR)
+      .map(([phoneme, prob]) => ({ phoneme, probability: prob as number }))
+      .sort((a, b) => b.probability - a.probability)
+      .slice(0, 3); // Top 3 alternatives
+    
+    // Determine confidence tier based on probability and regularity
+    const combinedScore = segmentProb * 0.7 + regularity * 0.3;
+    let tier: SegmentConfidence['tier'];
+    if (combinedScore > 0.85) tier = 'secure';
+    else if (combinedScore > 0.65) tier = 'probable';
+    else if (combinedScore > 0.45) tier = 'uncertain';
+    else tier = 'highly_uncertain';
+    
+    // Determine supporting and conflicting languages
+    const supporting: string[] = [];
+    const conflicting: string[] = [];
+    
+    for (let langIdx = 0; langIdx < alignmentMatrix.length; langIdx++) {
+      const reflex = alignmentMatrix[langIdx]?.[idx];
+      if (!reflex || reflex === GAP_CHAR) continue;
+      
+      // Check if reflex matches proto or is a natural change
+      const dist = getPhoneticDistance(segment, reflex, 10, 8);
+      const bonus = getNaturalChangeBonus(segment, reflex, 
+        idx > 0 ? protoTokens[idx - 1] : null,
+        idx < protoTokens.length - 1 ? protoTokens[idx + 1] : null
+      );
+      
+      if (segment === reflex || dist - bonus < 0.5) {
+        supporting.push(langNames[langIdx]);
+      } else {
+        conflicting.push(langNames[langIdx]);
+      }
+    }
+    
+    return {
+      segment,
+      tier,
+      probability: segmentProb,
+      alternatives,
+      supportingLanguages: supporting,
+      conflictingLanguages: conflicting
+    };
+  });
+};
+
+/**
+ * TONE CONTOUR NATURALNESS
+ * 
+ * Evaluates the naturalness of tone contours based on:
+ * 1. Contour complexity (level < simple contour < complex contour)
+ * 2. Register stability (downstep/upstep patterns)
+ * 3. Cross-linguistic tone change patterns
+ * 
+ * Returns a naturalness score (0-1) and penalty for unnatural patterns.
+ */
+const evaluateToneNaturalness = (
+  protoTone: ToneContour,
+  reflexTone: ToneContour,
+  context: { left?: ToneContour | null; right?: ToneContour | null }
+): { score: number; penalty: number; category: string } => {
+  let score = 0.5;
+  let penalty = 0;
+  let category = 'Neutral';
+  
+  // 1. Contour complexity analysis
+  const protoComplexity = protoTone.levels.length;
+  const reflexComplexity = reflexTone.levels.length;
+  
+  // Level tones (1 level) are most stable
+  // Simple contours (2 levels: rising/falling) are common
+  // Complex contours (3+ levels: dipping/peaking) are rarer
+  const complexityOrder = [1, 2, 3, 4]; // increasing complexity
+  const protoComplexityIdx = complexityOrder.indexOf(Math.min(protoComplexity, 4));
+  const reflexComplexityIdx = complexityOrder.indexOf(Math.min(reflexComplexity, 4));
+  
+  // Simplification is natural (complex → simple)
+  if (reflexComplexityIdx < protoComplexityIdx) {
+    score += 0.2;
+    category = 'Simplification';
+  }
+  // Complication is less natural
+  else if (reflexComplexityIdx > protoComplexityIdx) {
+    score -= 0.15;
+    penalty += 0.3;
+    category = 'Complication';
+  }
+  
+  // 2. Register analysis
+  if (protoTone.register !== reflexTone.register) {
+    // Downstep is natural in many tone languages
+    if (reflexTone.register === 'downstepped') {
+      score += 0.1;
+      category = category === 'Neutral' ? 'Downstep' : category;
+    }
+    // Upstep is rarer
+    else if (reflexTone.register === 'upstepped') {
+      score -= 0.1;
+      penalty += 0.2;
+      category = 'Upstep';
+    }
+  }
+  
+  // 3. Contour direction naturalness
+  if (protoComplexity === 1 && reflexComplexity === 2) {
+    // Level → Contour is common (context-conditioned)
+    score += 0.15;
+    category = 'Contour formation';
+  }
+  
+  if (protoComplexity === 2 && reflexComplexity === 2) {
+    // Rising → Falling or vice versa (tone flip)
+    const protoDir = protoTone.levels[protoTone.levels.length - 1] - protoTone.levels[0];
+    const reflexDir = reflexTone.levels[reflexTone.levels.length - 1] - reflexTone.levels[0];
+    
+    if (protoDir > 0 && reflexDir < 0) {
+      // Rising → Falling (contextual sandhi)
+      score += 0.1;
+      category = 'Direction flip';
+    }
+    else if (protoDir < 0 && reflexDir > 0) {
+      // Falling → Rising (less common)
+      score -= 0.05;
+      penalty += 0.15;
+    }
+  }
+  
+  // 4. Tone sandhi patterns
+  if (context.left) {
+    // High tone + low tone → dissimilation is natural
+    const leftHigh = Math.max(...context.left.levels) >= 4;
+    const protoHigh = Math.max(...protoTone.levels) >= 4;
+    
+    if (leftHigh && protoHigh && reflexTone.levels[0] < protoTone.levels[0]) {
+      score += 0.15; // Dissimilation (OCP effect)
+      category = 'Dissimilation';
+    }
+  }
+  
+  return {
+    score: Math.max(0, Math.min(1, score)),
+    penalty,
+    category
+  };
+};
+
+/**
+ * Compute tone contour complexity metric for naturalness evaluation.
+ * Used in inventory symmetry evaluation for tone languages.
+ */
+const computeToneContourComplexity = (tones: ToneContour[]): number => {
+  if (!tones || tones.length === 0) return 0;
+  
+  let complexity = 0;
+  
+  for (const tone of tones) {
+    // Base complexity from number of level points
+    complexity += tone.levels.length * 0.3;
+    
+    // Additional complexity for register shifts
+    if (tone.register === 'downstepped' || tone.register === 'upstepped') {
+      complexity += 0.5;
+    }
+    
+    // Rare contours (4+ levels) add significant complexity
+    if (tone.levels.length >= 4) {
+      complexity += 0.8;
+    }
+  }
+  
+  return complexity / tones.length;
 };
