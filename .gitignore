@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+docs/dcp.md
+docs/raa.md
+docs/rsc.md
