@@ -326,3 +326,90 @@ describe('Web Worker MCMC Tests', () => {
     expect(result.alignmentMatrix.length).toBe(2);
   }, TEST_TIMEOUT);
 });
+
+describe('Crash regression tests', () => {
+  it('should handle nested unattested nodes without crashing', async () => {
+    // Regression test for: Nested unattested nodes with empty words causing crash
+    const nestedUnattestedInputs: LanguageInput[] = [
+      {
+        id: '1775510704926',
+        name: 'PST',
+        word: '',
+        descendants: [
+          {
+            id: '1775510789729',
+            name: 'LS',
+            word: 'sjug'
+          }
+        ],
+        isUnattested: true
+      },
+      {
+        id: '1775510800180',
+        name: 'PNT',
+        word: '',
+        isUnattested: true,
+        descendants: [
+          {
+            id: '1775510837695',
+            name: 'WCT',
+            word: 'siu:kʰ'
+          },
+          {
+            id: '1775510856779',
+            name: 'EIT',
+            word: 'seukʰ'
+          }
+        ]
+      },
+      {
+        id: '1775510891245',
+        name: 'PMT',
+        word: '',
+        isUnattested: true,
+        descendants: [
+          {
+            id: '1775510934528',
+            name: 'TJW',
+            word: 'sjokʰa',
+            descendants: [
+              {
+                id: '1775510959478',
+                name: 'MTJ',
+                word: 'sjoxa'
+              }
+            ]
+          },
+          {
+            id: '1775510979107',
+            name: 'CW',
+            word: 'ʃjoɣa'
+          },
+          {
+            id: '1775510996399',
+            name: 'CE',
+            word: 'sjuɣa'
+          }
+        ]
+      }
+    ];
+
+    const result = await reconstructProtoWord(
+      nestedUnattestedInputs,
+      ReconstructionMethod.BAYESIAN_MCMC,
+      { mcmcIterations: 50, gapPenalty: 1.5, unknownCharPenalty: 0.5 }
+    );
+
+    // Debug: log the actual result structure
+    console.log('Result protoForm:', result.protoForm);
+    console.log('Result protoTokens:', result.protoTokens);
+    console.log('Result alignmentMatrix length:', result.alignmentMatrix.length);
+    console.log('Result alignmentMatrix:', result.alignmentMatrix);
+    console.log('Result confidence:', result.confidence);
+
+    // Should not crash and should return a valid result
+    expect(result).toBeTruthy();
+    expect(result.protoForm).toBeTruthy();
+    expect(result.alignmentMatrix.length).toBeGreaterThan(0);
+  }, TEST_TIMEOUT);
+});

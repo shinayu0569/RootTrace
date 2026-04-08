@@ -2771,7 +2771,7 @@ const inferCladeRepresentative = (
       word: inferCladeRepresentative(d, method, params, protoYear, reconstructedCache),
       year: getAttestationYear(d), isLoan: d.isLoan, isUnattested: d.isUnattested,
     })),
-  ].filter(w => w.word && w.word.trim() !== '' && !w.isLoan && !w.isUnattested);
+  ].filter(w => w.word && w.word.trim() !== '' && !w.isLoan);
   
   if (cladeWords.length === 0) {
     const result = ownWord || '';
@@ -3129,11 +3129,24 @@ export const reconstructProtoWord = (
   // Reorder alignmentMatrix to match topLevelForms order
   const leafOrder = msaResult.leafOrder;
   const reorderedMatrix: string[][] = [];
-  for (const form of topLevelForms) {
-    const formId = form.id || form.name;
-    const idx = leafOrder.indexOf(formId);
-    if (idx >= 0) {
-      reorderedMatrix.push(alignmentMatrix[idx]);
+  
+  // Check if we have a tree structure (leafOrder differs from topLevelForms)
+  const hasTreeStructure = validInputs.some(i => i.descendants && i.descendants.length > 0);
+  
+  if (hasTreeStructure) {
+    // For tree structure, use the alignment matrix as-is (it's aligned to leaf nodes)
+    // and build langNames from leafOrder
+    for (let i = 0; i < leafOrder.length; i++) {
+      reorderedMatrix.push(alignmentMatrix[i]);
+    }
+  } else {
+    // For flat structure, reorder to match topLevelForms
+    for (const form of topLevelForms) {
+      const formId = form.id || form.name;
+      const idx = leafOrder.indexOf(formId);
+      if (idx >= 0) {
+        reorderedMatrix.push(alignmentMatrix[idx]);
+      }
     }
   }
   alignmentMatrix = reorderedMatrix;
@@ -3146,7 +3159,29 @@ export const reconstructProtoWord = (
     };
   }
 
-  const langNames = topLevelForms.map(f => f.name);
+  // Build flat maps for efficient lookup of node info by ID
+  const nodeNameMap = new Map<string, string>();
+  const nodeYearMap = new Map<string, number>();
+  const nodeWordMap = new Map<string, string>();
+  const buildNodeMaps = (node: LanguageInput) => {
+    if (node.id) {
+      nodeNameMap.set(node.id, node.name);
+      nodeYearMap.set(node.id, getAttestationYear(node));
+      if (node.word) nodeWordMap.set(node.id, node.word);
+    }
+    if (node.descendants) {
+      for (const child of node.descendants) {
+        buildNodeMaps(child);
+      }
+    }
+  };
+  for (const input of validInputs) {
+    buildNodeMaps(input);
+  }
+  
+  const langNames = hasTreeStructure 
+    ? leafOrder.map(id => nodeNameMap.get(id) || id)
+    : topLevelForms.map(f => f.name);
   let reconstructedTokens: string[] = [];
   let candidatePaths: { chars: string[]; prob: number }[] = [];
   let segments: string[] = [];
@@ -3154,7 +3189,11 @@ export const reconstructProtoWord = (
   let candidates: any[] = [];
 
   // ── §2: Bootstrap with Wt-only weights; Wc needs an alignment first ────────
-  let languageWeights = applyFloorThreshold(topLevelForms.map(f => computeWt(f.year, protoYear)));
+  // For tree structure, compute weights for leaf nodes; for flat structure, use topLevelForms
+  const weightBaseForms = hasTreeStructure
+    ? leafOrder.map(id => ({ year: nodeYearMap.get(id) || 0 }))
+    : topLevelForms;
+  let languageWeights = applyFloorThreshold(weightBaseForms.map(f => computeWt(f.year, protoYear)));
 
   // ── §6: EM loop: align → reconstruct → re-align (up to 8 iterations) ─────
   const MAX_ITERATIONS = 8;  // Increased from 3 for better convergence
@@ -3163,13 +3202,25 @@ export const reconstructProtoWord = (
   let columnSpreadMults: number[] = [];
   let previousProtoForm = '';  // Track for convergence
 
+  // Pre-compute weight base forms for tree structure to use in EM loop
+  const weightBaseFormsForLoop = hasTreeStructure
+    ? leafOrder.map(id => ({ 
+        year: nodeYearMap.get(id) || 0, 
+        id, 
+        name: nodeNameMap.get(id) || id,
+        word: nodeWordMap.get(id) || '',
+        isUnattested: false 
+      }))
+    : topLevelForms;
+  const numLangsForSpread = weightBaseFormsForLoop.length;
+
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
 
     // §2: Full three-component weights from iteration 1 onward
-    if (iteration > 0) languageWeights = computeFullWeights(topLevelForms, alignmentMatrix, protoYear, reconstructedTokens);
+    if (iteration > 0) languageWeights = computeFullWeights(weightBaseFormsForLoop, alignmentMatrix, protoYear, reconstructedTokens);
 
     // §4b: Compute phylogenetic spread for this alignment
-    spreadScores = computePhylogeneticSpread(alignmentMatrix, topLevelForms.length);
+    spreadScores = computePhylogeneticSpread(alignmentMatrix, numLangsForSpread);
     columnSpreadMults = computeColumnSpreadMultipliers(spreadScores);
 
     const numCols = alignmentMatrix[0].length;
@@ -3236,13 +3287,19 @@ export const reconstructProtoWord = (
     previousProtoForm = currentProtoForm;
 
     // Pillar 4: re-align to refined proto-form
-    const res = performMSA_to_proto(topLevelForms, reconstructedTokens, params);
+    // For tree structure, use the original leaf words from input (not extracted from alignment)
+    const formsForRealign = hasTreeStructure
+      ? weightBaseFormsForLoop.map(f => ({ word: f.word || '', name: f.name, id: f.id }))
+      : topLevelForms;
+    const res = performMSA_to_proto(formsForRealign, reconstructedTokens, params);
     alignmentMatrix = res.alignmentMatrix;
     reconstructedTokens = res.protoTokens;
   }
 
   // ── §2: Final Wt × Wc × Wr weights ────────────────────────────────────────
-  languageWeights = computeFullWeights(topLevelForms, alignmentMatrix, protoYear, reconstructedTokens);
+  // Use the same forms that match the alignment matrix dimensions
+  const formsForFinalWeights = hasTreeStructure ? weightBaseFormsForLoop : topLevelForms;
+  languageWeights = computeFullWeights(formsForFinalWeights, alignmentMatrix, protoYear, reconstructedTokens);
 
   const protoForm = (candidates[0]?.form ?? '*' + segments.filter(c => c !== GAP_CHAR).join(''))
     .replace(/\.{2,}/g, '.');  // Collapse consecutive syllable boundaries
