@@ -40,7 +40,8 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
             <div className="space-y-1 text-xs">
               {[
                 { id: 'philosophy', label: 'Design philosophy' },
-                { id: 'python-syntax', label: 'Python/Lua syntax' },
+                { id: 'script-syntax', label: 'Script syntax tab' },
+                { id: 'three-modes', label: 'Three modes guide' },
                 { id: 'basics', label: 'Basic rules' },
                 { id: 'named', label: 'Named rules' },
                 { id: 'wildcards', label: 'Wildcards & classes' },
@@ -128,20 +129,21 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                   <li><strong>New zero-ambiguity additions</strong> <span className="inline-block text-[10px] font-bold uppercase bg-[#fdebd8] dark:bg-[#3a2010] text-[#8a4000] dark:text-[#d4a060] px-1.5 rounded">NEW</span> — strict <code>C[n]</code> index notation, <code>%var</code> for feature variables (separate from <code>@</code> classes), <code>first()</code>/<code>last()</code> instead of angle brackets, normalized arrows.</li>
                 </ul>
                 <div className="border-l-4 border-[#2d5fa3] bg-[#f8f7f4] dark:bg-[#232219] p-4 rounded-r-xl text-sm italic">
-                  <strong>Arrow normalization:</strong> The engine internally converts <code>=&gt;</code>, <code>-&gt;</code>, and <code>→</code> to <code>&gt;</code> before parsing. Use whichever you prefer — they are identical.
+                  <strong>Arrow normalization (Classic):</strong> In Classic mode, the engine accepts <code>=&gt;</code>, <code>-&gt;</code>, and <code>→</code> as equivalents to <code>&gt;</code>. <br/>
+                  <strong>Script syntax:</strong> In Script mode, use <code>=</code> for changes instead of arrows. The environment separator is <code>/</code> in both modes.
                 </div>
               </section>
 
-              <section id="python-syntax">
-                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Python/Lua-Inspired Syntax <span className="inline-block text-[10px] font-bold uppercase bg-[#d4f4d4] dark:bg-[#1a3a1a] text-[#1a601a] dark:text-[#6aaf6a] px-1.5 rounded ml-2">NEW</span></h2>
-                <p className="mb-4">RootTrace SCA now supports an alternative syntax inspired by Python and Lua, making it feel like a real programming language. This is <strong>fully backwards compatible</strong> — classic syntax continues to work.</p>
-                
-                <h3 className="text-lg font-semibold mt-6 mb-3">Key Differences</h3>
+              <section id="script-syntax">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Script Syntax <span className="inline-block text-[10px] font-bold uppercase bg-[#d4f4d4] dark:bg-[#1a3a1a] text-[#1a601a] dark:text-[#6aaf6a] px-1.5 rounded ml-2">TAB</span></h2>
+                <p className="mb-4">RootTrace SCA now has a dedicated <strong>Script</strong> tab with a clean, unambiguous syntax inspired by Lua. The Script syntax requires the <code>rule</code> keyword before rule names and uses <code>end</code> to close blocks, eliminating ambiguity. Use whichever syntax feels more natural — all three modes (Classic, Script, Block) are fully compatible.</p>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Classic vs Script Comparison</h3>
                 <table className="w-full text-sm border-collapse mb-4">
                   <thead>
                     <tr className="bg-[#eae6de] dark:bg-[#2a2920] text-[10px] uppercase font-bold text-rt-muted">
-                      <th className="p-2 text-left border border-rt-border">Classic</th>
-                      <th className="p-2 text-left border border-rt-border">Python/Lua Style</th>
+                      <th className="p-2 text-left border border-rt-border">Classic Syntax</th>
+                      <th className="p-2 text-left border border-rt-border">Script Syntax</th>
                       <th className="p-2 text-left border border-rt-border">Description</th>
                     </tr>
                   </thead>
@@ -173,59 +175,208 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                     </tr>
                     <tr className="border-t border-rt-border">
                       <td className="p-2 font-mono border border-rt-border">rule-name:<br/>  a &gt; e / _i</td>
-                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">def rule_name():<br/>  a = e if _i</td>
-                      <td className="p-2 border border-rt-border">Function with indentation</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">rule rule-name:<br/>  a = e / _i<br/>end</td>
+                      <td className="p-2 border border-rt-border">Named rule with 'rule' keyword and 'end' delimiter</td>
                     </tr>
                     <tr className="border-t border-rt-border">
                       <td className="p-2 font-mono border border-rt-border">Deromanizer:</td>
-                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">def deromanizer():</td>
-                      <td className="p-2 border border-rt-border">Function-style declaration</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">deromanizer:<br/>  qu = kw<br/>end</td>
+                      <td className="p-2 border border-rt-border">Block with 'end' delimiter</td>
                     </tr>
                     <tr className="border-t border-rt-border">
                       <td className="p-2 font-mono border border-rt-border">Romanizer-intermediate:</td>
-                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">def romanizer("intermediate"):</td>
-                      <td className="p-2 border border-rt-border">Named romanizer as function</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">romanizer-intermediate:<br/>  ɸ = f<br/>end</td>
+                      <td className="p-2 border border-rt-border">Named romanizer with 'end'</td>
                     </tr>
                     <tr className="border-t border-rt-border">
                       <td className="p-2 font-mono border border-rt-border">k &gt; g / V_V</td>
-                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">k = g if V_V</td>
-                      <td className="p-2 border border-rt-border">Assignment with if</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">k = g / V_V</td>
+                      <td className="p-2 border border-rt-border">Assignment with = (slash / for environment)</td>
                     </tr>
                     <tr className="border-t border-rt-border">
-                      <td className="p-2 font-mono border border-rt-border">// comment</td>
+                      <td className="p-2 font-mono border border-rt-border">; comment</td>
                       <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">-- comment</td>
-                      <td className="p-2 border border-rt-border">Lua-style comments only (# reserved for word boundaries)</td>
+                      <td className="p-2 border border-rt-border">Classic uses ;  Script uses -- (Lua-style)</td>
                     </tr>
                   </tbody>
                 </table>
 
-                <h3 className="text-lg font-semibold mt-6 mb-3">Complete Example (New Syntax)</h3>
+                <h3 className="text-lg font-semibold mt-6 mb-3">Complete Example (Script Syntax)</h3>
                 <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
                   <p className="text-[#6b6860] italic">-- Define phoneme classes</p>
-                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">class</span> C = ["p", "t", "k", "b", "d", "g"]</p>
-                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">class</span> V = [+syllabic]</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">class</span> C = [p, t, k, b, d, g]</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">class</span> V = [a, e, i, o, u]</p>
                   <p></p>
                   <p className="text-[#6b6860] italic">-- Define syllable structure</p>
                   <p>syllables = <span className="text-[#0e6f6a] dark:text-[#4ecac4]">"C? :: V :: C?"</span></p>
                   <p>stress = <span className="text-[#0e6f6a] dark:text-[#4ecac4]">"penultimate"</span></p>
                   <p></p>
-                  <p className="text-[#6b6860] italic">-- Sound change rules with indentation</p>
-                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">def</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">vowel_shift</span>():</p>
-                  <p className="pl-4">a = e <span className="text-[#2d5fa3] dark:text-[#7aa8e0]">if</span> _i</p>
-                  <p className="pl-4">o = u <span className="text-[#2d5fa3] dark:text-[#7aa8e0]">if</span> _i</p>
+                  <p className="text-[#6b6860] italic">-- Sound change rules with 'rule' and 'end'</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">rule</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">vowel_shift</span>:</p>
+                  <p className="pl-4">a = e / _i</p>
+                  <p className="pl-4">o = u / _i</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">end</span></p>
                   <p></p>
                   <p className="text-[#6b6860] italic">-- Simple inline rules</p>
-                  <p>k = g <span className="text-[#2d5fa3] dark:text-[#7aa8e0]">if</span> V_V</p>
-                  <p>p = f <span className="text-[#2d5fa3] dark:text-[#7aa8e0]">if</span> _V</p>
+                  <p>k = g / V_V</p>
+                  <p>p = f / _V</p>
                   <p></p>
-                  <p className="text-[#6b6860] italic">-- Romanizer as function</p>
-                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">def</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">romanizer</span>():</p>
+                  <p className="text-[#6b6860] italic">-- Chain shift example</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">chain</span> drag:</p>
+                  <p className="pl-4">iː &gt;&gt; əɪ &gt;&gt; aɪ</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">end</span></p>
+                  <p></p>
+                  <p className="text-[#6b6860] italic">-- Romanizer with 'end'</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">romanizer</span>:</p>
                   <p className="pl-4">ʃ = sh</p>
                   <p className="pl-4">θ = th</p>
+                  <p><span className="text-[#2d5fa3] dark:text-[#7aa8e0]">end</span></p>
                 </div>
 
                 <div className="border-l-4 border-[#1a601a] bg-[#f0f8f0] dark:bg-[#1a2a1a] p-4 rounded-r-xl text-sm mt-4">
-                  <strong>Tip:</strong> Use whichever syntax feels more natural. The new Python/Lua style is great for programmers, while the classic syntax remains familiar for linguists. Mixing both styles in the same script is fully supported.
+                  <strong>Key Script Syntax Rules:</strong>
+                  <ul className="list-disc pl-4 mt-2 space-y-1">
+                    <li>Use <code>rule</code> keyword before rule names (required - no ambiguity)</li>
+                    <li>Close all blocks with <code>end</code> keyword</li>
+                    <li>Use <code>=</code> for sound changes (instead of <code>&gt;</code>)</li>
+                    <li>Use <code>/</code> for environments (instead of <code>if</code>)</li>
+                    <li>Use <code>--</code> for comments (Lua-style)</li>
+                  </ul>
+                </div>
+              </section>
+
+              <section id="three-modes">
+                <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">The Three SCA Modes</h2>
+                <p className="mb-4">RootTrace SCA offers three ways to write sound change rules. Choose the one that fits your workflow — they're all fully compatible and can be switched between at any time.</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="inline-block text-[10px] font-bold uppercase bg-[#e8e0f8] dark:bg-[#2a1a48] text-[#3a1a80] dark:text-[#a080e0] px-2 py-0.5 rounded">Classic</span>
+                      <span className="text-xs text-rt-muted">Text tab</span>
+                    </div>
+                    <p className="text-sm mb-2">Familiar to linguists. Uses arrows <code>&gt;</code> and <code>=&gt;</code> for changes.</p>
+                    <div className="font-mono text-xs space-y-1">
+                      <p>Class C {'{p, t, k}'}</p>
+                      <p>rule-name:</p>
+                      <p className="pl-3">p &gt; b / V_V</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="inline-block text-[10px] font-bold uppercase bg-[#d4f4d4] dark:bg-[#1a3a1a] text-[#1a601a] dark:text-[#6aaf6a] px-2 py-0.5 rounded">Script</span>
+                      <span className="text-xs text-rt-muted">Script tab</span>
+                    </div>
+                    <p className="text-sm mb-2">Clean, unambiguous. Uses <code>rule</code> keyword and <code>end</code> to close blocks.</p>
+                    <div className="font-mono text-xs space-y-1">
+                      <p>class C = [p, t, k]</p>
+                      <p>rule rule-name:</p>
+                      <p className="pl-3">p = b / V_V</p>
+                      <p>end</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="inline-block text-[10px] font-bold uppercase bg-[#fdebd8] dark:bg-[#3a2010] text-[#8a4000] dark:text-[#d4a060] px-2 py-0.5 rounded">Block</span>
+                      <span className="text-xs text-rt-muted">Blocks tab</span>
+                    </div>
+                    <p className="text-sm mb-2">Visual drag-and-drop editor. Perfect for beginners and visual learners.</p>
+                    <div className="text-xs text-rt-muted">
+                      <p>Visual blocks that can be arranged and connected.</p>
+                      <p>Automatically converts to Classic or Script text.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Which Mode Should I Use?</h3>
+                <table className="w-full text-sm border-collapse mb-4">
+                  <thead>
+                    <tr className="bg-[#eae6de] dark:bg-[#2a2920] text-[10px] uppercase font-bold text-rt-muted">
+                      <th className="p-2 text-left border border-rt-border">If you...</th>
+                      <th className="p-2 text-left border border-rt-border">Use This Mode</th>
+                      <th className="p-2 text-left border border-rt-border">Why</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 border border-rt-border">Are familiar with Vulgarlang or Lexurgy</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">Classic</td>
+                      <td className="p-2 border border-rt-border">Same syntax conventions you already know</td>
+                    </tr>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 border border-rt-border">Want zero ambiguity in your rules</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">Script</td>
+                      <td className="p-2 border border-rt-border">Required <code>rule</code> keyword, explicit <code>end</code> delimiters</td>
+                    </tr>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 border border-rt-border">Prefer visual/drag-and-drop interfaces</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">Block</td>
+                      <td className="p-2 border border-rt-border">No syntax to memorize, just connect blocks</td>
+                    </tr>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 border border-rt-border">Are new to sound change appliers</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">Block → Script</td>
+                      <td className="p-2 border border-rt-border">Start visual, then switch to Script for precision</td>
+                    </tr>
+                    <tr className="border-t border-rt-border">
+                      <td className="p-2 border border-rt-border">Know Python, Lua, or similar languages</td>
+                      <td className="p-2 font-mono text-[#2d5fa3] dark:text-[#7aa8e0] border border-rt-border">Script</td>
+                      <td className="p-2 border border-rt-border">Familiar block structure with <code>end</code> delimiters</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Same Rule, Three Ways</h3>
+                <p className="mb-4">Here's the same simple lenition rule written in all three modes:</p>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+                  <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4">
+                    <div className="text-[10px] font-bold uppercase text-rt-muted mb-2">Classic</div>
+                    <div className="font-mono text-sm space-y-1">
+                      <p className="text-rt-muted">; Intervocalic lenition</p>
+                      <p>Class C {'{p, t, k}'}</p>
+                      <p>Class V {'{a, e, i, o, u}'}</p>
+                      <p>lenition:</p>
+                      <p className="pl-3">p &gt; b / V_V</p>
+                      <p className="pl-3">t &gt; d / V_V</p>
+                      <p className="pl-3">k &gt; g / V_V</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4">
+                    <div className="text-[10px] font-bold uppercase text-rt-muted mb-2">Script</div>
+                    <div className="font-mono text-sm space-y-1">
+                      <p className="text-rt-muted">-- Intervocalic lenition</p>
+                      <p>class C = [p, t, k]</p>
+                      <p>class V = [a, e, i, o, u]</p>
+                      <p>rule lenition:</p>
+                      <p className="pl-3">p = b / V_V</p>
+                      <p className="pl-3">t = d / V_V</p>
+                      <p className="pl-3">k = g / V_V</p>
+                      <p>end</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4">
+                    <div className="text-[10px] font-bold uppercase text-rt-muted mb-2">Block Editor</div>
+                    <div className="text-sm text-rt-muted">
+                      <p className="mb-2">Visual representation:</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li>Class block: C = p, t, k</li>
+                        <li>Class block: V = a, e, i, o, u</li>
+                        <li>Rule block: lenition</li>
+                        <li className="pl-4">Sound change: p → b / V_V</li>
+                        <li className="pl-4">Sound change: t → d / V_V</li>
+                        <li className="pl-4">Sound change: k → g / V_V</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-l-4 border-[#2d5fa3] bg-[#f8f7f4] dark:bg-[#232219] p-4 rounded-r-xl text-sm">
+                  <strong>Switching Between Modes:</strong> You can switch between Classic, Script, and Block tabs at any time. Your rules will be automatically converted. This makes it easy to start with Blocks for visualization, then switch to Script for precision editing.
                 </div>
               </section>
 
@@ -721,10 +872,20 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
 
               <section id="comments">
                 <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Comments</h2>
-                <p className="mb-4">Both <code>//</code> and <code>;</code> introduce line comments. <code>#</code> is reserved for word boundaries.</p>
+                <p className="mb-4">Comments are standardized per mode. <code>#</code> is reserved for word boundaries in both modes.</p>
+
+                <h3 className="text-lg font-semibold mt-4 mb-3">Classic Syntax</h3>
+                <p className="mb-2">Use <code>;</code> for comments (semicolon style).</p>
                 <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
-                  <p className="text-[#6b6860] italic">// This is a comment</p>
-                  <p className="text-[#6b6860] italic">; This is also a comment</p>
+                  <p className="text-[#6b6860] italic">; This is a Classic comment</p>
+                  <p>p &gt; b / V_V <span className="text-[#6b6860] italic">; with inline comment</span></p>
+                </div>
+
+                <h3 className="text-lg font-semibold mt-6 mb-3">Script Syntax</h3>
+                <p className="mb-2">Use <code>--</code> for comments (Lua-style).</p>
+                <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-1">
+                  <p className="text-[#6b6860] italic">-- This is a Script comment</p>
+                  <p>p = b / V_V <span className="text-[#6b6860] italic">-- with inline comment</span></p>
                 </div>
               </section>
 
@@ -732,7 +893,7 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
                 <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Rule ordering</h2>
                 <p className="mb-4">Rules are applied in declaration order, top to bottom. The output of each rule is the input to the next.</p>
                 <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-sm space-y-2">
-                  <p className="text-[#6b6860] italic">// Match longer patterns first to avoid bleeding</p>
+                  <p className="text-[#6b6860] italic">; Match longer patterns first to avoid bleeding</p>
                   <p>aʊ &gt; ow</p>
                   <p>ʊ &gt; u</p>
                 </div>
@@ -741,7 +902,7 @@ export default function SyntaxGuide({ onClose }: SyntaxGuideProps) {
               <section id="fullexample">
                 <h2 className="text-xl font-bold border-t border-rt-border pt-8 mb-4">Full worked example</h2>
                 <div className="bg-[#f0ede6] dark:bg-[#2a2920] border border-rt-border rounded-xl p-4 font-mono text-xs space-y-1 max-h-96 overflow-y-auto">
-                  <p className="text-[#6b6860] italic">// Latin → Portuguese sketch</p>
+                  <p className="text-[#6b6860] italic">; Latin → Portuguese sketch</p>
                   <p><span className="text-rt-accent font-bold">Class</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">stop</span> {`{p, t, k, b, d, g}`}</p>
                   <p><span className="text-rt-accent font-bold">Syllables</span>: C* @vowel C*</p>
                   <p><span className="text-rt-accent font-bold">Deferred</span> <span className="text-[#2a5c1a] dark:text-[#6aaf4a]">nasal-assim</span>: [C +nasal] &gt; [%place] / _[%place]</p>

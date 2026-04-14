@@ -1,7 +1,7 @@
 {
   "name": "roottrace",
   "private": true,
-  "version": "3.2.4",
+  "version": "3.3.4",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",

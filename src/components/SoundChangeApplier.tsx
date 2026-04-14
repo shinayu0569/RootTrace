@@ -7,30 +7,43 @@ import BlockBasedScaEditor, { blocksToSyntax, syntaxToBlocks } from './BlockBase
 import { exportToText, exportToBlocks, exportToJSON, importFromJSON, textToBlocks, blocksToText, Block } from '@/services/scaImportExport';
 import { highlightSCA, TOKEN_COLORS, renderHighlightedLine, tokenizeLine } from './SCASyntaxHighlighter';
 import { SCAEditor } from './SCAEditor.tsx';
+import { SCAScriptEditor } from './SCAScriptEditor.tsx';
 
 export default function SoundChangeApplier() {
-  const [editorMode, setEditorMode] = useState<'text' | 'block'>('text');
+  const [editorMode, setEditorMode] = useState<'classic' | 'script' | 'block'>('classic');
   const [rules, setRules] = useState('Class C {p, t, k, b, d, g}\nClass V {a, e, i, o, u}\n\nrule-name:\n  a => e / _ i');
+  const [scriptRules, setScriptRules] = useState('; Script syntax example\nclass C = [p, t, k, b, d, g]\nclass V = [a, e, i, o, u]\n\nrule lenition:\n  p = b / V _ V\nend');
   const [blockRules, setBlockRules] = useState<Block[]>([]);
   const [inputWords, setInputWords] = useState('p a t i\nk a t u');
 
   // Handle mode toggle with sync
-  const toggleMode = (newMode: 'text' | 'block') => {
+  const toggleMode = (newMode: 'classic' | 'script' | 'block') => {
     if (newMode === editorMode) return;
     
     if (newMode === 'block') {
-      // Convert text to blocks
+      // Convert current syntax to blocks
+      const currentRules = editorMode === 'script' ? scriptRules : rules;
       try {
-        const parsed = syntaxToBlocks(rules);
+        const parsed = syntaxToBlocks(currentRules);
         setBlockRules(parsed);
       } catch (e) {
         // If parsing fails, start with empty blocks
         setBlockRules([]);
       }
-    } else {
-      // Convert blocks to text
-      const text = blocksToSyntax(blockRules);
-      setRules(text);
+    } else if (newMode === 'classic') {
+      // Convert blocks or script to classic
+      if (editorMode === 'block') {
+        const text = blocksToSyntax(blockRules);
+        setRules(text);
+      }
+      // If coming from script, rules are already separate
+    } else if (newMode === 'script') {
+      // Convert blocks or classic to script
+      if (editorMode === 'block') {
+        const text = blocksToSyntax(blockRules, true); // usePythonStyle = true for script
+        setScriptRules(text);
+      }
+      // If coming from classic, script is already separate
     }
     setEditorMode(newMode);
   };
@@ -60,9 +73,10 @@ export default function SoundChangeApplier() {
 
   useEffect(() => {
     const engine = new BlendedScaEngine();
-    const errors = engine.validate(rules);
+    const currentRules = editorMode === 'script' ? scriptRules : rules;
+    const errors = engine.parse(currentRules);
     setValidationErrors(errors);
-  }, [rules]);
+  }, [rules, scriptRules, editorMode]);
 
   const handleScroll = () => {
     if (textareaRef.current && backdropRef.current) {
@@ -73,7 +87,7 @@ export default function SoundChangeApplier() {
 
   // Export handlers
   const handleExportText = () => {
-    const text = editorMode === 'text' ? rules : blocksToSyntax(blockRules);
+    const text = editorMode === 'classic' ? rules : editorMode === 'script' ? scriptRules : blocksToSyntax(blockRules);
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -132,13 +146,13 @@ export default function SoundChangeApplier() {
           } else {
             setExportImportError(null);
           }
-          // Switch to text mode for imported blocks
-          setEditorMode('text');
+          // Switch to classic mode for imported blocks
+          setEditorMode('classic');
         } else {
           // Import as text (SCA file)
           setRules(content);
           setExportImportError(null);
-          setEditorMode('text');
+          setEditorMode('classic');
         }
       } catch (err: any) {
         setExportImportError(`Import failed: ${err.message}`);
@@ -168,8 +182,9 @@ export default function SoundChangeApplier() {
 
     try {
       const engine = new BlendedScaEngine();
-      engine.parse(rules);
-      
+      const currentRules = editorMode === 'script' ? scriptRules : rules;
+      engine.parse(currentRules);
+
       const results = engine.apply(words);
 
       setOutputWords(results.map(r => ({
@@ -198,22 +213,34 @@ export default function SoundChangeApplier() {
                 {/* Editor Mode Toggle */}
                 <div className="flex items-center bg-rt-input rounded-lg p-1 border border-rt-border">
                   <button
-                    onClick={() => toggleMode('text')}
+                    onClick={() => toggleMode('classic')}
                     className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${
-                      editorMode === 'text' 
-                        ? 'bg-rt-accent text-white shadow-sm' 
+                      editorMode === 'classic'
+                        ? 'bg-rt-accent text-white shadow-sm'
                         : 'text-rt-muted hover:text-rt-text'
                     }`}
-                    title="Text editor mode"
+                    title="Classic syntax mode"
                   >
                     <FileText className="w-3 h-3" />
-                    <span className="hidden sm:inline">Text</span>
+                    <span className="hidden sm:inline">Classic</span>
+                  </button>
+                  <button
+                    onClick={() => toggleMode('script')}
+                    className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${
+                      editorMode === 'script'
+                        ? 'bg-rt-accent text-white shadow-sm'
+                        : 'text-rt-muted hover:text-rt-text'
+                    }`}
+                    title="Script syntax mode (Lua/Python-style)"
+                  >
+                    <FileText className="w-3 h-3" />
+                    <span className="hidden sm:inline">Script</span>
                   </button>
                   <button
                     onClick={() => toggleMode('block')}
                     className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${
-                      editorMode === 'block' 
-                        ? 'bg-rt-accent text-white shadow-sm' 
+                      editorMode === 'block'
+                        ? 'bg-rt-accent text-white shadow-sm'
                         : 'text-rt-muted hover:text-rt-text'
                     }`}
                     title="Block editor mode (Scratch-style)"
@@ -294,11 +321,13 @@ export default function SoundChangeApplier() {
             )}
 
             <p className="text-xs text-rt-muted font-bold uppercase tracking-wider mb-4 hidden sm:block">
-              {editorMode === 'text' 
-                ? 'Define classes and rules. Supports Then: blocks, LTR/RTL, and feature changes.'
+              {editorMode === 'classic'
+                ? 'Classic syntax: Class C {p,t,k}, rule-name:, a > b / V_V'
+                : editorMode === 'script'
+                ? 'Script syntax: class C = [p,t,k], rule name: ... end, a = b / V_V'
                 : 'Drag and snap blocks to build sound change rules. Same power, visual interface.'}
             </p>
-            {editorMode === 'text' ? (
+            {editorMode === 'classic' ? (
               <div className="relative w-full h-48 sm:h-64 lg:h-80 bg-rt-input border border-rt-border rounded-2xl focus-within:border-rt-accent transition-all overflow-hidden">
                 <SCAEditor
                   value={rules}
@@ -306,9 +335,17 @@ export default function SoundChangeApplier() {
                   className="h-full w-full"
                 />
               </div>
+            ) : editorMode === 'script' ? (
+              <div className="relative w-full h-48 sm:h-64 lg:h-80 bg-rt-input border border-rt-border rounded-2xl focus-within:border-rt-accent transition-all overflow-hidden">
+                <SCAScriptEditor
+                  value={scriptRules}
+                  onChange={(value) => setScriptRules(value)}
+                  className="h-full w-full"
+                />
+              </div>
             ) : (
               <div className="h-[500px] sm:h-[600px] lg:h-[700px] border border-rt-border rounded-2xl overflow-hidden flex flex-col">
-                <BlockBasedScaEditor 
+                <BlockBasedScaEditor
                   initialBlocks={blockRules}
                   onChange={handleBlockChange}
                 />

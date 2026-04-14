@@ -6,6 +6,7 @@
  */
 
 import { Declaration, Program } from './scaAST';
+import { parseSCA } from './scaUnified';
 
 // Define Block type locally to avoid circular dependency
 export type BlockType = 
@@ -346,7 +347,7 @@ export function exportToJSON(blocks: Block[], metadata?: Record<string, any>): s
  */
 export function textToBlocks(text: string): { blocks: Block[]; errors: string[] } {
   // Use the new parser to get AST, then convert to blocks
-  const { program, errors: parseErrors } = require('./scaUnified').parseSCA(text);
+  const { program, errors: parseErrors } = parseSCA(text);
   
   const errors = parseErrors.map((e: any) => 
     `Line ${e.line}${e.column ? `:${e.column}` : ''}: ${e.message}`

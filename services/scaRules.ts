@@ -954,7 +954,7 @@ export const RULE_PARSERS = [
 ];
 
 // Forward declarations for special rule blocks
-function parseDeromanizerDeclaration(parser: UnifiedParser): DeromanizerDeclaration | null {
+export function parseDeromanizerDeclaration(parser: UnifiedParser): DeromanizerDeclaration | null {
   const startToken = parser.peek();
   
   if (!parser.match('KEYWORD') || startToken.value.toLowerCase() !== 'deromanizer') {
@@ -1013,7 +1013,7 @@ function parseDeromanizerDeclaration(parser: UnifiedParser): DeromanizerDeclarat
   });
 }
 
-function parseRomanizerDeclaration(parser: UnifiedParser): RomanizerDeclaration | null {
+export function parseRomanizerDeclaration(parser: UnifiedParser): RomanizerDeclaration | null {
   const startToken = parser.peek();
   
   if (!parser.match('KEYWORD') || startToken.value.toLowerCase() !== 'romanizer') {
@@ -1082,7 +1082,7 @@ function parseRomanizerDeclaration(parser: UnifiedParser): RomanizerDeclaration 
   });
 }
 
-function parseCleanupDeclaration(parser: UnifiedParser): CleanupDeclaration | null {
+export function parseCleanupDeclaration(parser: UnifiedParser): CleanupDeclaration | null {
   const startToken = parser.peek();
   
   if (!parser.match('KEYWORD') || startToken.value.toLowerCase() !== 'cleanup') {
@@ -1158,7 +1158,7 @@ function parseCleanupDeclaration(parser: UnifiedParser): CleanupDeclaration | nu
   });
 }
 
-function parseDeferredDeclaration(parser: UnifiedParser): DeferredDeclaration | null {
+export function parseDeferredDeclaration(parser: UnifiedParser): DeferredDeclaration | null {
   const startToken = parser.peek();
   
   if (!parser.match('KEYWORD') || startToken.value.toLowerCase() !== 'deferred') {

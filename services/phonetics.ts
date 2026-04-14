@@ -679,13 +679,47 @@ export const describeFeatures = (char: string): string => {
 };
 
 /**
+ * Feature name aliases for common phonetic categories.
+ * These expand to proper feature combinations.
+ */
+const FEATURE_ALIASES: Record<string, Partial<DistinctiveFeatures>> = {
+  stop: { consonantal: true, sonorant: false, continuant: false, delayedRelease: false },
+  liquid: { consonantal: true, sonorant: true, continuant: true }, // both rhotics and laterals
+  lateral: { consonantal: true, sonorant: true, continuant: true, lateral: true },
+  rhotic: { consonantal: true, sonorant: true, continuant: true, lateral: false },
+  fricative: { consonantal: true, sonorant: false, continuant: true, delayedRelease: false },
+  affricate: { consonantal: true, sonorant: false, continuant: true, delayedRelease: true },
+  approximant: { consonantal: true, sonorant: true, continuant: true },
+  vowel: { syllabic: true, consonantal: false, sonorant: true },
+  glide: { syllabic: false, consonantal: false, sonorant: true, continuant: true },
+  obstruent: { consonantal: true, sonorant: false },
+  sonorant: { sonorant: true },
+};
+
+/**
  * Returns all phonemes in the FEATURE_MAP and featureMatrix that match the given feature criteria.
+ * Supports feature aliases like 'stop', 'liquid', 'fricative', etc.
  */
 export const getPhonemesByFeatures = (criteria: Partial<DistinctiveFeatures>): string[] => {
+  // Expand any feature aliases in the criteria
+  const expandedCriteria: Partial<DistinctiveFeatures> = {};
+  for (const [key, value] of Object.entries(criteria)) {
+    if (value === true && FEATURE_ALIASES[key]) {
+      // For positive features (+stop), expand the alias
+      Object.assign(expandedCriteria, FEATURE_ALIASES[key]);
+    } else if (value === false && FEATURE_ALIASES[key]) {
+      // For negative features (-stop), we can't easily negate an alias
+      // Just pass through as-is (will likely match nothing, which is expected)
+      (expandedCriteria as any)[key] = value;
+    } else {
+      (expandedCriteria as any)[key] = value;
+    }
+  }
+
   const allSymbols = { ...FEATURE_MAP, ...featureMatrix.getMatrix() };
   return Object.keys(allSymbols).filter(symbol => {
     const features = allSymbols[symbol];
-    return Object.entries(criteria).every(([key, value]) => {
+    return Object.entries(expandedCriteria).every(([key, value]) => {
       return (features as any)[key] === value;
     });
   });

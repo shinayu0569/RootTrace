@@ -246,33 +246,52 @@ export function blocksToSyntax(blocks: Block[], usePythonStyle: boolean = false)
       }
       case 'rule': {
         if (usePythonStyle) {
+          // Script syntax: rule name: ... end
           const opts: string[] = [];
           if (data.propagate === 'true') opts.push('propagate');
           if (data.direction) opts.push(data.direction as string);
-          const optStr = opts.length > 0 ? `[${opts.join(' ')}]` : '';
-          lines.push(`${indent}def ${(data.name as string).replace(/-/g, '_')}(${optStr}):`);
+          const optStr = opts.length > 0 ? ` [${opts.join(' ')}]` : '';
+          lines.push(`${indent}rule ${data.name}${optStr}:`);
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
+          lines.push(`${indent}end`);
         } else {
           const opts: string[] = [];
           if (data.propagate === 'true') opts.push('propagate');
           if (data.direction) opts.push(data.direction as string);
           const optStr = opts.length > 0 ? ` [${opts.join(' ')}]` : '';
           lines.push(`${indent}${data.name}${optStr}:`);
-        }
-        if (block.children) {
-          block.children.forEach(child => processBlock(child, indent + '  '));
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
         }
         break;
       }
       case 'chainShift': {
-        lines.push(`${indent}chain(${data.type}) ${data.chain}:`);
+        if (usePythonStyle) {
+          lines.push(`${indent}chain ${data.type}:`);
+          lines.push(`${indent}  ${data.chain}`);
+          lines.push(`${indent}end`);
+        } else {
+          lines.push(`${indent}chain(${data.type}) ${data.chain}:`);
+        }
         break;
       }
       case 'block': {
-        lines.push(`${indent}[block]`);
-        if (block.children) {
-          block.children.forEach(child => processBlock(child, indent + '  '));
+        if (usePythonStyle) {
+          lines.push(`${indent}block:`);
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
+          lines.push(`${indent}end`);
+        } else {
+          lines.push(`${indent}[block]`);
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
+          lines.push(`${indent}[end]`);
         }
-        lines.push(`${indent}[end]`);
         break;
       }
       case 'next': {
@@ -306,47 +325,64 @@ export function blocksToSyntax(blocks: Block[], usePythonStyle: boolean = false)
       }
       case 'deromanizer': {
         if (usePythonStyle) {
-          lines.push(`${indent}def deromanizer():`);
+          lines.push(`${indent}deromanizer:`);
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
+          lines.push(`${indent}end`);
         } else {
           const literal = data.literal === 'true' ? ' literal' : '';
           lines.push(`${indent}Deromanizer${literal}:`);
-        }
-        if (block.children) {
-          block.children.forEach(child => processBlock(child, indent + '  '));
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
         }
         break;
       }
       case 'romanizer': {
         if (usePythonStyle) {
-          const name = data.name ? `"${data.name}"` : '';
-          lines.push(`${indent}def romanizer(${name}):`);
+          lines.push(`${indent}romanizer:`);
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
+          lines.push(`${indent}end`);
         } else {
           const name = data.name ? `-${data.name}` : '';
           const romanizerLiteral = data.literal === 'true' ? ' literal' : '';
           lines.push(`${indent}Romanizer${name}${romanizerLiteral}:`);
-        }
-        if (block.children) {
-          block.children.forEach(child => processBlock(child, indent + '  '));
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
         }
         break;
       }
       case 'deferred': {
         if (usePythonStyle) {
-          lines.push(`${indent}@deferred`);
+          lines.push(`${indent}deferred:`);
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
+          lines.push(`${indent}end`);
         } else {
           lines.push(`${indent}Deferred:`);
-        }
-        if (block.children) {
-          block.children.forEach(child => processBlock(child, indent + '  '));
+          if (block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
         }
         break;
       }
       case 'cleanup': {
         if (usePythonStyle) {
           if (data.enabled === 'false') {
-            lines.push(`${indent}# cleanup ${data.name} off`);
+            lines.push(`${indent}; cleanup ${data.name} off`);
           } else {
-            lines.push(`${indent}def cleanup(${data.name}):`);
+            lines.push(`${indent}cleanup${data.name ? ` ${data.name}` : ''}:`);
+          }
+          if (data.enabled !== 'false' && block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
+          if (data.enabled !== 'false') {
+            lines.push(`${indent}end`);
           }
         } else {
           if (data.enabled === 'false') {
@@ -354,9 +390,9 @@ export function blocksToSyntax(blocks: Block[], usePythonStyle: boolean = false)
           } else {
             lines.push(`${indent}Cleanup${data.name ? ` ${data.name}` : ''}:`);
           }
-        }
-        if (data.enabled !== 'false' && block.children) {
-          block.children.forEach(child => processBlock(child, indent + '  '));
+          if (data.enabled !== 'false' && block.children) {
+            block.children.forEach(child => processBlock(child, indent + '  '));
+          }
         }
         break;
       }
@@ -366,7 +402,7 @@ export function blocksToSyntax(blocks: Block[], usePythonStyle: boolean = false)
       }
       case 'apply': {
         if (usePythonStyle) {
-          lines.push(`${indent}apply(${data.ruleName})`);
+          lines.push(`${indent}apply: ${data.ruleName}`);
         } else {
           lines.push(`${indent}Apply: ${data.ruleName}`);
         }
@@ -415,8 +451,12 @@ export function syntaxToBlocks(syntax: string): Block[] {
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('//')) continue;
+    let trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';')) continue; // Standardized: ; comments only
+    
+    // Normalize arrows before matching (standardized: > and => only)
+    trimmed = trimmed
+      .replace(/\s*=>\s*/g, ' > ');
     
     // Calculate indent level
     const indent = line.match(/^(\s*)/)?.[1].length || 0;
@@ -429,8 +469,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
     
     let block: Block | null = null;
     
-    // Parse different syntax patterns
-    const classMatch = trimmed.match(/^Class\s+(\w+)\s*\{([^}]+)\}/);
+    // Parse different syntax patterns (case-insensitive for Classic/Script compatibility)
+    const classMatch = trimmed.match(/^class\s+(\w+)\s*\{([^}]+)\}/i);
     if (classMatch) {
       block = {
         id: generateId(),
@@ -441,7 +481,7 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const elementMatch = trimmed.match(/^Element\s+(\w+)\s+(.+)/);
+    const elementMatch = trimmed.match(/^element\s+(\w+)\s+(.+)/i);
     if (elementMatch) {
       block = {
         id: generateId(),
@@ -452,24 +492,26 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const ruleMatch = trimmed.match(/^(\w[\w-]*)(?:\s*\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
-    if (ruleMatch && !trimmed.startsWith('IF') && !trimmed.startsWith('Then') && !trimmed.startsWith('Next')) {
-      const opts = ruleMatch[2]?.split(/\s+/) || [];
+    // Handle both Classic 'name:' and Script 'rule name:' patterns
+    const ruleMatch = trimmed.match(/^(?:(rule)\s+)?(\w[\w-]*)(?:\s*\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/i);
+    if (ruleMatch && !trimmed.match(/^if/i) && !trimmed.match(/^then/i) && !trimmed.match(/^next/i)) {
+      const opts = ruleMatch[3]?.split(/\s+/) || [];
       block = {
         id: generateId(),
         type: 'rule',
         x: 50 + (indent * 20),
         y: 50 + (blocks.length * 80),
-        data: { 
-          name: ruleMatch[1], 
+        data: {
+          name: ruleMatch[2],
           propagate: opts.includes('propagate').toString(),
-          direction: ruleMatch[3] || (opts.find(o => o === 'ltr' || o === 'rtl') || '')
+          direction: ruleMatch[4] || (opts.find(o => o === 'ltr' || o === 'rtl') || '')
         },
         children: []
       };
     }
     
-    const soundChangeMatch = trimmed.match(/^(.+?)\s*>\s*(.+?)(?:\s*\/\s*(.+?))?(?:\s*!(.+?))?(?:\s+except\s+(.+))?$/);
+    // Handle both Classic > and Script = for sound changes
+    const soundChangeMatch = trimmed.match(/^(.+?)\s*(?:>|=)\s*(.+?)(?:\s*\/\s*(.+?))?(?:\s*!(.+?))?(?:\s+except\s+(.+))?$/);
     if (soundChangeMatch && !trimmed.startsWith('Class') && !trimmed.startsWith('Element') && !trimmed.startsWith('feat:')) {
       // Parse capture groups from target
       let target = soundChangeMatch[1].trim();
@@ -506,7 +548,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const nextMatch = trimmed.match(/^Next(?:\s*\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/);
+    // Handle both Classic 'Next' and Script 'next' (case-insensitive)
+    const nextMatch = trimmed.match(/^next(?:\s*\[([^\]]+)\])?(?:\s+(propagate|ltr|rtl))?:$/i);
     if (nextMatch) {
       const opts = nextMatch[1]?.split(/\s+/) || [];
       block = {
@@ -522,6 +565,38 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
+    // Chain shift parser - Classic: chain(type) chain:  Script: chain type: chain
+    const chainMatch = trimmed.match(/^chain\((\w+)\)\s+(.+):$/i);
+    const scriptChainMatch = trimmed.match(/^chain\s+(\w+):$/i);
+    if (chainMatch) {
+      block = {
+        id: generateId(),
+        type: 'chainShift',
+        x: 50 + (indent * 20),
+        y: 50 + (blocks.length * 80),
+        data: {
+          type: chainMatch[1],
+          chain: chainMatch[2]
+        }
+      };
+    } else if (scriptChainMatch) {
+      // Script-style chain - look ahead for the chain content on next line
+      const nextLine = lines[i + 1]?.trim();
+      if (nextLine && !nextLine.match(/^end$/)) {
+        block = {
+          id: generateId(),
+          type: 'chainShift',
+          x: 50 + (indent * 20),
+          y: 50 + (blocks.length * 80),
+          data: {
+            type: scriptChainMatch[1],
+            chain: nextLine
+          }
+        };
+        i++; // Skip the chain content line
+      }
+    }
+
     const blockMatch = trimmed.match(/^\[block\]$/);
     if (blockMatch) {
       block = {
@@ -533,11 +608,13 @@ export function syntaxToBlocks(syntax: string): Block[] {
         children: []
       };
     }
-    
+
+    // Handle both Classic [end] and Script 'end' keyword
     const endMatch = trimmed.match(/^\[end\]$/);
-    if (endMatch) {
+    const scriptEndMatch = trimmed.match(/^end$/);
+    if (endMatch || scriptEndMatch) {
       // Pop the block from stack
-      if (stack.length > 0 && stack[stack.length - 1].block.type === 'block') {
+      if (stack.length > 0) {
         stack.pop();
       }
       continue;
@@ -558,7 +635,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const deferredMatch = trimmed.match(/^Deferred:$/);
+    // Handle both Classic 'Deferred' and Script 'deferred' (case-insensitive)
+    const deferredMatch = trimmed.match(/^deferred:$/i);
     if (deferredMatch) {
       block = {
         id: generateId(),
@@ -584,7 +662,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const ifMatch = trimmed.match(/^IF\s+(.+?)\s+THEN\s+(.+?)(?:\s+ELSE\s+(.+))?$/);
+    // Handle both Classic 'IF/THEN' and Script 'if/then' (case-insensitive)
+    const ifMatch = trimmed.match(/^if\s+(.+?)\s+then\s+(.+?)(?:\s+else\s+(.+))?$/i);
     if (ifMatch) {
       block = {
         id: generateId(),
@@ -600,7 +679,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const deromanizerMatch = trimmed.match(/^Deromanizer:/);
+    // Handle both Classic 'Deromanizer' and Script 'deromanizer' (case-insensitive)
+    const deromanizerMatch = trimmed.match(/^deromanizer:$/i);
     if (deromanizerMatch) {
       block = {
         id: generateId(),
@@ -612,7 +692,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const romanizerMatch = trimmed.match(/^Romanizer(-\w+)?:/);
+    // Handle both Classic 'Romanizer' and Script 'romanizer' (case-insensitive)
+    const romanizerMatch = trimmed.match(/^romanizer(-\w+)?:$/i);
     if (romanizerMatch) {
       block = {
         id: generateId(),
@@ -624,7 +705,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const applyMatch = trimmed.match(/^Apply:\s*(\w+)$/);
+    // Handle both Classic 'Apply' and Script 'apply' (case-insensitive)
+    const applyMatch = trimmed.match(/^apply:\s*(\w+)$/i);
     if (applyMatch) {
       block = {
         id: generateId(),
@@ -635,7 +717,8 @@ export function syntaxToBlocks(syntax: string): Block[] {
       };
     }
     
-    const syllablesMatch = trimmed.match(/^Syllables:\s*(.+)$/);
+    // Handle both Classic 'Syllables' and Script 'syllables' (case-insensitive)
+    const syllablesMatch = trimmed.match(/^syllables:\s*(.+)$/i);
     if (syllablesMatch) {
       block = {
         id: generateId(),

@@ -4,11 +4,11 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { StreamLanguage } from '@codemirror/language';
 import type { StreamParser } from '@codemirror/language';
 
-// Define SCA syntax highlighting
-const scaParser: StreamParser<unknown> = {
+// Define Script syntax highlighting (Lua/Python-style)
+const scriptParser: StreamParser<unknown> = {
   token(stream) {
-    // Comments (standardized: ; only)
-    if (stream.match(';')) {
+    // Comments (Script syntax: -- only)
+    if (stream.match('--')) {
       stream.skipToEnd();
       return 'comment';
     }
@@ -20,8 +20,13 @@ const scaParser: StreamParser<unknown> = {
       return 'string';
     }
 
-    // Arrows (standardized: > and => only)
-    if (stream.match('=>') || stream.match('>')) {
+    // Chain shift arrows (>> and >>>)
+    if (stream.match('>>>') || stream.match('>>')) {
+      return 'keyword';
+    }
+
+    // Change operator (Script syntax: = instead of >)
+    if (stream.match('=') && !stream.match('==')) {
       return 'keyword';
     }
 
@@ -38,16 +43,22 @@ const scaParser: StreamParser<unknown> = {
       return 'attribute';
     }
 
-    // Keywords
+    // Keywords (Script syntax specific)
     const keywords = [
-      'Class', 'class', 'Element', 'element', 'Stress', 'stress', 'Syllables', 'syllables',
-      'Deromanizer', 'deromanizer', 'Romanizer', 'romanizer', 'Deferred', 'deferred',
-      'Cleanup', 'cleanup', 'Apply', 'apply', 'IF', 'if', 'THEN', 'then', 'ELSE', 'else',
-      'Next', 'next', 'chain', 'block', 'end', 'def', 'feat'
+      // Declaration keywords
+      'class', 'element', 'syllables', 'stress',
+      // Block keywords
+      'rule', 'deromanizer', 'romanizer', 'deferred', 'cleanup', 'chain',
+      // Control flow
+      'if', 'then', 'else', 'end',
+      // Block types
+      'block', 'next', 'apply',
+      // Modifiers
+      'drag', 'push', 'propagate', 'ltr', 'rtl'
     ];
-    
+
     for (const kw of keywords) {
-      if (stream.match(kw) && !/[a-zA-Z0-9_]/.test(stream.peek() || '')) {
+      if (stream.match(kw) && !/[a-zA-Z0-9_-]/.test(stream.peek() || '')) {
         return 'keyword';
       }
     }
@@ -71,21 +82,21 @@ const scaParser: StreamParser<unknown> = {
   },
 };
 
-const scaLanguage = StreamLanguage.define(scaParser);
+const scriptLanguage = StreamLanguage.define(scriptParser);
 
-interface SCAEditorProps {
+interface SCAScriptEditorProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
 }
 
-export function SCAEditor({ value, onChange, className = '' }: SCAEditorProps) {
+export function SCAScriptEditor({ value, onChange, className = '' }: SCAScriptEditorProps) {
   return (
     <CodeMirror
       value={value}
       onChange={onChange}
       theme={oneDark}
-      extensions={[scaLanguage]}
+      extensions={[scriptLanguage]}
       className={className}
       basicSetup={{
         lineNumbers: true,
@@ -104,4 +115,4 @@ export function SCAEditor({ value, onChange, className = '' }: SCAEditorProps) {
   );
 }
 
-export default SCAEditor;
+export default SCAScriptEditor;
