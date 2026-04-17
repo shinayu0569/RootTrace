@@ -276,7 +276,18 @@ class Rule {
 
       for (const subRule of subRules) {
 
-        current = this.applySubRule(current, subRule, stage.options);
+        // Merge subRule options with stage options (subRule takes precedence)
+        const mergedOptions: RuleOptions = {
+          ...stage.options,
+          ...subRule.options,
+          // Explicitly override if subRule has these set
+          propagate: subRule.options?.propagate ?? stage.options.propagate,
+          direction: subRule.options?.direction ?? stage.options.direction,
+          firstOnly: subRule.options?.firstOnly ?? stage.options.firstOnly,
+          lastOnly: subRule.options?.lastOnly ?? stage.options.lastOnly,
+        };
+
+        current = this.applySubRule(current, subRule, mergedOptions);
 
       }
 
@@ -294,7 +305,9 @@ class Rule {
 
       
 
-      if (!stage.options.propagate) break;
+      // Check propagate at both stage and sub-rule level
+      const anyPropagate = subRules.some(sr => sr.options?.propagate) || stage.options.propagate;
+      if (!anyPropagate) break;
 
       
 
@@ -430,72 +443,77 @@ class Rule {
 
 
 
-    for (const env of environments) {
+    // Use directional application if direction is specified
+    if (options.direction) {
+      result = this.applyDirectionalSubRule(result, subRule, options);
+    } else {
+      for (const env of environments) {
 
-      const [beforeEnv, afterEnv] = env.split('_');
+        const [beforeEnv, afterEnv] = env.split('_');
 
-      
+        
 
-      const { regexStr, subscriptMap, featureVars } = this.buildRegex(match, beforeEnv, afterEnv, exceptions);
+        const { regexStr, subscriptMap, featureVars } = this.buildRegex(match, beforeEnv, afterEnv, exceptions);
 
-      const regex = new RegExp(regexStr, 'gu');
+        const regex = new RegExp(regexStr, 'gu');
 
-      
+        
 
-      if (options.firstOnly) {
+        if (options.firstOnly) {
 
-        const m = regex.exec(result);
+          const m = regex.exec(result);
 
-        if (m) {
+          if (m) {
 
-          const fullMatch = m[0];
+            const fullMatch = m[0];
 
-          const groups = m.groups;
+            const groups = m.groups;
 
-          const repl = this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
+            const repl = this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
 
-          result = result.slice(0, m.index) + repl + result.slice(m.index + fullMatch.length);
+            result = result.slice(0, m.index) + repl + result.slice(m.index + fullMatch.length);
+
+          }
+
+        } else if (options.lastOnly) {
+
+          let lastMatch: any = null;
+
+          let m;
+
+          while ((m = regex.exec(result)) !== null) {
+
+            lastMatch = m;
+
+          }
+
+          if (lastMatch) {
+
+            const fullMatch = lastMatch[0];
+
+            const groups = lastMatch.groups;
+
+            const repl = this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
+
+            result = result.slice(0, lastMatch.index) + repl + result.slice(lastMatch.index + fullMatch.length);
+
+          }
+
+        } else {
+
+          result = result.replace(regex, (...args) => {
+
+            const fullMatch = args[0];
+
+            const groups = args[args.length - 1];
+
+            return this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
+
+          });
 
         }
-
-      } else if (options.lastOnly) {
-
-        let lastMatch: any = null;
-
-        let m;
-
-        while ((m = regex.exec(result)) !== null) {
-
-          lastMatch = m;
-
-        }
-
-        if (lastMatch) {
-
-          const fullMatch = lastMatch[0];
-
-          const groups = lastMatch.groups;
-
-          const repl = this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
-
-          result = result.slice(0, lastMatch.index) + repl + result.slice(lastMatch.index + fullMatch.length);
-
-        }
-
-      } else {
-
-        result = result.replace(regex, (...args) => {
-
-          const fullMatch = args[0];
-
-          const groups = args[args.length - 1];
-
-          return this.buildReplacement(replacement, fullMatch, groups, subscriptMap, featureVars);
-
-        });
 
       }
-
     }
 
     
@@ -526,7 +544,8 @@ class Rule {
 
 
 
-      const modifiers = `[${combiningRange}${spacingModifierRange}${toneLetters}]`;
+      // Ranges must be in ascending numerical order: spacingModifierRange (\u02B0-) comes before combiningRange (\u1DC0-)
+      const modifiers = `[${spacingModifierRange}${toneLetters}${combiningRange}]`;
 
       const stress = `[${stressMarks}]`;
 
@@ -1176,9 +1195,9 @@ class Rule {
 
         res = res.replace(/#/g, '$');
 
-        // $ now matches syllable boundary (the literal . in syllabified words) OR word boundary
+        // $ matches syllable boundary (the literal . in syllabified words)
 
-        res = res.replace(/\$/g, '(?:\\.|$|\\s)');
+        res = res.replace(/\$/g, '(?:\\.)');
 
         res = res.replace(/\+/g, '(?:\\+)');
 
@@ -2690,6 +2709,20 @@ export class BlendedScaEngine {
 
     // a = o        =>  a > o
 
+    // Handle assignment-style rules: X = Y if ENV  =>  X > Y / ENV
+
+    normalizedScript = normalizedScript.replace(/(\S+)\s*=\s*(\S+)\s+if\s+(.+)/g, '$1 > $2 / $3');
+
+    // Handle Script-style directives: [propagate], [ltr], [rtl]  =>  propagate:, ltr:, rtl:
+    // Do this BEFORE the assignment conversion so a = o [propagate] becomes a = o propagate:
+    normalizedScript = normalizedScript.replace(/\[propagate\]/g, 'propagate:');
+    normalizedScript = normalizedScript.replace(/\[ltr\]/g, 'ltr:');
+    normalizedScript = normalizedScript.replace(/\[rtl\]/g, 'rtl:');
+
+    // Handle simple assignment-style rules: X = Y  =>  X > Y
+    // Also handle with directives: X = Y directive: => X > Y directive:
+    normalizedScript = normalizedScript.replace(/^(\S+)\s*=\s*(\S+)(\s+(?:propagate|ltr|rtl):)?$/gm, '$1 > $2$3');
+
     normalizedScript = this.convertNewSyntaxToOld(normalizedScript);
 
     
@@ -3680,6 +3713,22 @@ export class BlendedScaEngine {
 
           this.rules.push(r);
 
+        } else if (mode === 'cleanup') {
+
+          // In cleanup mode without a current rule, check if line has "name: rule" syntax
+
+          const namedRuleMatch = line.match(/^[\s]*([\w-]+):\s*(.+)$/);
+
+          const ruleName = namedRuleMatch ? namedRuleMatch[1] : 'unnamed-cleanup';
+
+          const ruleContent = namedRuleMatch ? namedRuleMatch[2] : line;
+
+          const r = new Rule(ruleName, {}, this);
+
+          this.parseSubRuleLineWithErrors(r, ruleContent, false, originalLineNum, errors);
+
+          this.cleanupRules.push(r);
+
         }
 
         continue;
@@ -3926,6 +3975,10 @@ export class BlendedScaEngine {
 
     let lastOnly = false;
 
+    let propagate = false;
+
+    let direction: 'ltr' | 'rtl' | undefined = undefined;
+
     const firstMatch = target.match(/^first\((.+?)\)$/);
 
     const lastMatch = target.match(/^last\((.+?)\)$/);
@@ -3980,7 +4033,26 @@ export class BlendedScaEngine {
 
       replacement = envParts[0].trim();
 
-      const envStr = envParts[1].trim();
+      let envStr = envParts[1].trim();
+
+      
+
+      // Parse directives from the END of envStr BEFORE splitting environments
+      // e.g., "_t ltr:" => extract "ltr" directive, leaving "_t" as env
+      const envDirectivePattern = /(\s*)(?:(ltr|rtl):?\s+)?(propagate):\s*$/i;
+      const envDirectionOnlyPattern = /(\s*)(ltr|rtl):\s*$/i;
+      
+      const envMultiMatch = envStr.match(envDirectivePattern);
+      const envSingleMatch = envStr.match(envDirectionOnlyPattern);
+      
+      if (envMultiMatch) {
+        if (envMultiMatch[2]) direction = envMultiMatch[2] as 'ltr' | 'rtl';
+        propagate = true;
+        envStr = envStr.slice(0, envMultiMatch.index + (envMultiMatch[1]?.length || 0)).trim();
+      } else if (envSingleMatch) {
+        direction = envSingleMatch[2] as 'ltr' | 'rtl';
+        envStr = envStr.slice(0, envSingleMatch.index + (envSingleMatch[1]?.length || 0)).trim();
+      }
 
       
 
@@ -4086,7 +4158,27 @@ export class BlendedScaEngine {
 
 
 
-    rule.addSubRule(target, replacement, envs, excs, isElse, { firstOnly, lastOnly });
+    // Parse inline directives at the end of the replacement (variables already declared above)
+    // Check for multiple directives at the end: e.g., "ltr propagate:", "rtl propagate:", "propagate:"
+    // Match any combination of (ltr|rtl) and propagate in any order, with colons
+    const directivePattern = /(\s*)(?:(ltr|rtl):?\s+)?(propagate):\s*$/i;
+    const directionOnlyPattern = /(\s*)(ltr|rtl):\s*$/i;
+    
+    const multiMatch = replacement.match(directivePattern);
+    const singleMatch = replacement.match(directionOnlyPattern);
+    
+    if (multiMatch) {
+      // Has propagate, maybe with direction
+      if (multiMatch[2]) direction = multiMatch[2] as 'ltr' | 'rtl';
+      propagate = true;
+      replacement = replacement.slice(0, multiMatch.index + (multiMatch[1]?.length || 0)).trim();
+    } else if (singleMatch) {
+      // Only direction directive
+      direction = singleMatch[2] as 'ltr' | 'rtl';
+      replacement = replacement.slice(0, singleMatch.index + (singleMatch[1]?.length || 0)).trim();
+    }
+    
+    rule.addSubRule(target, replacement, envs, excs, isElse, { firstOnly, lastOnly, propagate, direction });
 
   }
 
@@ -4880,7 +4972,9 @@ export class BlendedScaEngine {
 
     current = words.map(w => {
 
-      const syllabified = this.syllabify(w);
+      // Skip syllabification if word already has syllable markers
+
+      const syllabified = w.includes('.') ? w : this.syllabify(w);
 
       // Assign stress if pattern is configured
 
@@ -5012,6 +5106,30 @@ export class BlendedScaEngine {
 
 
 
+    // Apply cleanup rules again after all main rules (for cases with no main rules or final cleanup)
+
+    for (const cleanupName of this.activeCleanupRules) {
+
+      const cleanupRule = this.cleanupRules.find(r => r.name === cleanupName);
+
+      if (cleanupRule) {
+
+        const cBefore = current;
+
+        current = cleanupRule.apply(current);
+
+        if (current !== cBefore) {
+
+          history.push({ rule: `Cleanup: ${cleanupName}`, before: cBefore, after: current });
+
+        }
+
+      }
+
+    }
+
+
+
     let romanized = current;
 
     if (this.romanizer) {
@@ -5022,11 +5140,15 @@ export class BlendedScaEngine {
 
 
 
+    // Preserve syllable markers in output if original word had them
+
+    const final = word.includes('.') ? current : current.replace(/\./g, '');
+
     return {
 
       original: word,
 
-      final: current.replace(/\./g, ''), // Remove syllable markers
+      final,
 
       history,
 

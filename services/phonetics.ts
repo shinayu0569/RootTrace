@@ -383,6 +383,7 @@ export const parseToneContour = (ipaString: string): ToneContour | undefined => 
 
 // Regex Components for IPA Tokenization
 export const baseRange = "a-zA-Z\\u00C0-\\u02AF\\u0370-\\u03FF\\u1D00-\\u1DBF\\u01C0-\\u01C3\\u0294\\u0295\\u02A1\\u02A2*";
+// Ranges must be in ascending numerical order for regex character classes
 export const combiningRange = "\\u0300-\\u036F\\u1DC0-\\u1DFF\\u20D0-\\u20FF\\uFE20-\\uFE2F";
 export const spacingModifierRange = "\\u02B0-\\u02FF\\u1D2C-\\u1D6A\\u2070-\\u209F\\u02D0\\u02D1";
 export const toneLetters = "\\u02E5-\\u02EB\\uA700-\\uA71F";

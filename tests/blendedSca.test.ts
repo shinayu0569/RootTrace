@@ -322,7 +322,7 @@ describe('Blended SCA - Syllable Declarations', () => {
 
   it('should support syllable boundary marker $', () => {
     const result = runSCA(['apa.ka'], 'a > o / _$');
-    expect(result).toEqual(['opa.ka']);
+    expect(result).toEqual(['apo.ka']);
   });
 
   it('should support σ syllable wildcard', () => {

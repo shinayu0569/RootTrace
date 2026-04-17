@@ -32,3 +32,6 @@ docs/scaar.md
 # Debug folder and debug files
 debug/
 debug_*.json
+
+# Test results folder
+tests/test-results/
