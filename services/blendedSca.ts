@@ -567,6 +567,10 @@ class Rule {
         // $1, $2, etc. are backreferences - keep them as-is for buildReplacement
 
         // They refer to capture groups created by <...> in the match pattern
+
+      }
+
+      // Handle class exclusion syntax FIRST: C-k (C minus k), C-{k,p} (C minus k and p), C-[+voice])
       // This must come BEFORE set handling so C-{k} is processed correctly
       res = res.replace(/\b([A-Z])-(\{[^}]+\}|\[[^\]]+\]|[^\s&|(){}\[\]]+)/g, (full, className, exclusions) => {
         const cls = this.engine.getClasses()[className];
@@ -1386,6 +1390,7 @@ class Rule {
           ? `(?:${result.map(escapeRegExp).join('|')})`
           : '(?!)';
       });
+      }
 
       return res;
 
