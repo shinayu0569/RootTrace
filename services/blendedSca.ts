@@ -1386,7 +1386,6 @@ class Rule {
           ? `(?:${result.map(escapeRegExp).join('|')})`
           : '(?!)';
       });
-      }
 
       return res;
 
