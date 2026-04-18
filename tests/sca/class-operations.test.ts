@@ -10,8 +10,8 @@ import { runSCA } from './helpers';
 describe('Class Exclusion C-k', () => {
   it('should exclude single phoneme', () => {
     const result = runSCA(['pataka'], 'C-k > s');
-    // All consonants except k become s
-    expect(result[0]).toBe('saska');
+    // All consonants except k become s (p,t→s, k stays)
+    expect(result[0]).toBe('sasaka');
   });
 
   it('should work with vowels', () => {
@@ -24,8 +24,8 @@ describe('Class Exclusion C-k', () => {
 describe('Class Exclusion with Set C-{k,p}', () => {
   it('should exclude multiple phonemes', () => {
     const result = runSCA(['pataka'], 'C-{k,p} > s');
-    // All consonants except k and p become s
-    expect(result[0]).toBe('paska');
+    // All consonants except k and p become s (t→s, p and k stay)
+    expect(result[0]).toBe('pasaka');
   });
 
   it('should work with braces', () => {
@@ -101,7 +101,7 @@ describe('Complex Class Operations', () => {
 describe('Script Syntax - Class Operations', () => {
   it('should support C-k in Script', () => {
     const result = runSCA(['pataka'], 'C-k = s');
-    expect(result[0]).toBe('saska');
+    expect(result[0]).toBe('sasaka');
   });
 
   it('should support C&V in Script', () => {

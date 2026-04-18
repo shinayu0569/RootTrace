@@ -35,3 +35,4 @@ debug_*.json
 
 # Test results folder
 tests/test-results/
+SCA_REDUX_PROGRESS.md

@@ -425,8 +425,6 @@ class Rule {
 
     const { match, replacement, environments, exceptions } = subRule;
 
-    
-
     if (match.startsWith('Apply:')) {
 
       const ruleName = match.split(':')[1];
@@ -525,7 +523,6 @@ class Rule {
 
 
   private buildRegex(match: string, before: string, after: string, exceptions: string[]): { regexStr: string, subscriptMap: Record<string, string>, featureVars: Record<string, string> } {
-
     const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const subscriptMap: Record<string, string> = {};
@@ -537,9 +534,7 @@ class Rule {
 
 
     const translatePart = (part: string, isBefore: boolean, isMatch: boolean) => {
-
       if (!part) return '';
-
       let res = part;
 
 
@@ -572,22 +567,36 @@ class Rule {
         // $1, $2, etc. are backreferences - keep them as-is for buildReplacement
 
         // They refer to capture groups created by <...> in the match pattern
-
-      }
-
-
-
-      // Handle sets {a,b,c}
-
-      res = res.replace(/\{([^}]+)\}/g, (_, setStr) => {
-
-        const items = setStr.split(',').map((s: string) => s.trim());
-
-        return `(?:${items.map(escapeRegExp).join('|')})`;
-
+      // This must come BEFORE set handling so C-{k} is processed correctly
+      res = res.replace(/\b([A-Z])-(\{[^}]+\}|\[[^\]]+\]|[^\s&|(){}\[\]]+)/g, (full, className, exclusions) => {
+        const cls = this.engine.getClasses()[className];
+        if (!cls) return full;
+        
+        const excludeSet = new Set<string>();
+        if (exclusions.startsWith('{') && exclusions.endsWith('}')) {
+          // Set exclusion: C-{k,p}
+          const items = exclusions.slice(1, -1).split(/[,\s]+/).filter((s: string) => s);
+          items.forEach((item: string) => excludeSet.add(item.trim()));
+        } else if (exclusions.startsWith('[') && exclusions.endsWith(']')) {
+          // Feature exclusion: C-[+voice] - skip for now, handle later
+          return full;
+        } else {
+          // Single phoneme exclusion: C-k
+          excludeSet.add(exclusions);
+        }
+        
+        const filtered = cls.filter((m: string) => !excludeSet.has(m));
+        const sorted = filtered.sort((a, b) => b.length - a.length);
+        return filtered.length > 0
+          ? `(?:${sorted.map(escapeRegExp).join('|')})`
+          : '(?!)';
       });
 
-
+      // Handle sets {a,b,c}
+      res = res.replace(/\{([^}]+)\}/g, (_, setStr) => {
+        const items = setStr.split(',').map((s: string) => s.trim());
+        return `(?:${items.map(escapeRegExp).join('|')})`;
+      });
 
       // Handle explicit capture groups <...> for Lexurgy-style $1 $2 backreferences
 
@@ -883,13 +892,13 @@ class Rule {
 
       const classes = this.engine.getClasses();
 
-      res = res.replace(/\bC\b/g, `(?:${classes['C']?.map(escapeRegExp).join('|') || 'C'})`);
+      res = res.replace(/\bC\b(?!-)/g, `(?:${classes['C']?.map(escapeRegExp).join('|') || 'C'})`);
 
-      res = res.replace(/\bV\b/g, `(?:${classes['V']?.map(escapeRegExp).join('|') || 'V'})`);
+      res = res.replace(/\bV\b(?!-)/g, `(?:${classes['V']?.map(escapeRegExp).join('|') || 'V'})`);
 
-      res = res.replace(/\bD\b/g, `(?:${classes['D']?.map(escapeRegExp).join('|') || 'D'})`);
+      res = res.replace(/\bD\b(?!-)/g, `(?:${classes['D']?.map(escapeRegExp).join('|') || 'D'})`);
 
-      res = res.replace(/\bᴰ\b/g, `(?:${classes['ᴰ']?.map(escapeRegExp).join('|') || 'ᴰ'})`);
+      res = res.replace(/\bᴰ\b(?!-)/g, `(?:${classes['ᴰ']?.map(escapeRegExp).join('|') || 'ᴰ'})`);
 
       res = res.replace(/\bX\b/g, `(?:${phonemePattern})`);
 
@@ -922,7 +931,6 @@ class Rule {
       // This must come AFTER basic class expansion but BEFORE intersection handling
 
       res = res.replace(/\b([A-Z])-([^\s&|(){}\[\]]+)/g, (full, className, exclusions) => {
-
         const cls = this.engine.getClasses()[className];
 
         if (!cls) return full;
@@ -1005,9 +1013,13 @@ class Rule {
 
         const filtered = cls.filter((m: string) => !excludeSet.has(m));
 
-        return filtered.length > 0 
+        // Sort by length (longest first) to prevent partial matches (e.g., 'kx' before 'k')
 
-          ? `(?:${filtered.map(escapeRegExp).join('|')})` 
+        const sorted = filtered.sort((a, b) => b.length - a.length);
+
+        return filtered.length > 0
+
+          ? `(?:${sorted.map(escapeRegExp).join('|')})` 
 
           : '(?!)';
 
@@ -1029,13 +1041,41 @@ class Rule {
 
           operand = operand.replace(/^\((.*)\)$/, '$1');
 
+          // Handle already-expanded regex patterns like (?:kʷʲ|gʷʲ|...)
+
+          if (operand.startsWith('?:')) {
+
+            const inner = operand.slice(2).replace(/^\((.*)\)$/, '$1');
+
+            return inner.split('|').filter(p => p);
+
+          }
+
           
 
           if (operand.startsWith('@')) {
 
-            const clsName = operand.slice(1);
+            const name = operand.slice(1);
 
-            return this.engine.getClasses()[clsName] || [];
+            // Try class first, then element
+
+            const cls = this.engine.getClasses()[name];
+
+            if (cls) return cls;
+
+            // Check if it's an element
+
+            const el = this.engine.getElements()[name];
+
+            if (el) {
+
+              // Element value might contain wildcards, expand them
+
+              return this.engine.getElements()[name] || [];
+
+            }
+
+            return [];
 
           } else if (operand.startsWith('[') && operand.endsWith(']')) {
 
@@ -1217,6 +1257,137 @@ class Rule {
 
 
 
+      // Handle class exclusion syntax: C-k (C minus k), C-{k,p} (C minus k and p), C-[+voice]
+      // This must come AFTER basic class expansion but BEFORE intersection handling
+      res = res.replace(/\b([A-Z])-([^\s&|(){}\[\]]+)/g, (full, className, exclusions) => {
+        const cls = this.engine.getClasses()[className];
+        if (!cls) return full;
+        
+        // Parse exclusions - can be: single phoneme, {list}, or [features]
+        const excludeSet = new Set<string>();
+        if (exclusions.startsWith('{') && exclusions.endsWith('}')) {
+          // Multiple explicit exclusions: C-{k,p}
+          const items = exclusions.slice(1, -1).split(/[,\s]+/).filter((s: string) => s);
+          items.forEach((item: string) => excludeSet.add(item.trim()));
+        } else if (exclusions.startsWith('[') && exclusions.endsWith(']')) {
+          // Feature-based exclusion: C-[+voice]
+          const featureStr = exclusions.slice(1, -1);
+          const criteria: any = {};
+          const negCriteria: any = {};
+          featureStr.split(/\s+/).forEach((f: string) => {
+            if (f.startsWith('!')) {
+              negCriteria[f.slice(1)] = true;
+            } else if (f.startsWith('+') || f.startsWith('-')) {
+              criteria[f.slice(1)] = f.startsWith('+');
+            }
+          });
+          // Find all phonemes in the class that match the criteria
+          for (const phoneme of cls) {
+            let matches = true;
+            for (const [key, val] of Object.entries(criteria)) {
+              if (!matchFeatures(phoneme, { [key]: val })) {
+                matches = false;
+                break;
+              }
+            }
+            if (matches) excludeSet.add(phoneme);
+          }
+        } else {
+          // Single explicit exclusion: C-k
+          excludeSet.add(exclusions);
+        }
+        
+        // Filter out excluded items
+        const filtered = cls.filter((m: string) => !excludeSet.has(m));
+        // Sort by length (longest first) to prevent partial matches (e.g., 'kx' before 'k')
+        const sorted = filtered.sort((a, b) => b.length - a.length);
+        return filtered.length > 0
+          ? `(?:${sorted.map(escapeRegExp).join('|')})` 
+          : '(?!)';
+      });
+
+      // Handle intersection (&) and negation (!) operators
+      // Examples: @C&@V (intersection), C&!V (C minus V), @stop&[+voice], C-p&[+stop]
+      while (res.includes('&')) {
+        // Match: class exclusion (C-p), expanded regex ((?:...)), class reference (@class), feature ([+voice]), or single class (C)
+        res = res.replace(/(\([?:]\)?[^)]+\)|[A-Z]-[a-zA-Z{}[\]]+|@\w+|\[[^\]]+\]|[A-Z])&(!?\S+)/, (full, left, right) => {
+        const getMembers = (operand: string): string[] => {
+          operand = operand.replace(/^\((.*)\)$/, '$1');
+          
+          // Handle already-expanded regex patterns like (?:kʷʲ|gʷʲ|...)
+          if (operand.startsWith('?:')) {
+            const inner = operand.slice(2).replace(/^\((.*)\)$/, '$1');
+            return inner.split('|').filter(p => p);
+          }
+          
+          // Handle class exclusion: C-k, C-{k,p}, C-[+voice]
+          if (/^[A-Z]-/.test(operand)) {
+            const className = operand[0];
+            const exclusions = operand.slice(2);
+            const cls = this.engine.getClasses()[className];
+            if (!cls) return [];
+            
+            const excludeSet = new Set<string>();
+            if (exclusions.startsWith('{') && exclusions.endsWith('}')) {
+              const items = exclusions.slice(1, -1).split(/[,\s]+/).filter((s: string) => s);
+              items.forEach((item: string) => excludeSet.add(item.trim()));
+            } else if (exclusions.startsWith('[') && exclusions.endsWith(']')) {
+              const featureStr = exclusions.slice(1, -1);
+              const criteria: any = {};
+              featureStr.split(/\s+/).forEach((f: string) => {
+                if (f.startsWith('+') || f.startsWith('-')) {
+                  criteria[f.slice(1)] = f.startsWith('+');
+                }
+              });
+              for (const phoneme of cls) {
+                if (matchFeatures(phoneme, criteria)) {
+                  excludeSet.add(phoneme);
+                }
+              }
+            } else {
+              excludeSet.add(exclusions);
+            }
+            return cls.filter((m: string) => !excludeSet.has(m));
+          }
+          
+          if (operand.startsWith('@')) {
+            return this.engine.getClasses()[operand.slice(1)] || [];
+          } else if (operand.startsWith('[') && operand.endsWith(']')) {
+            const featureStr = operand.slice(1, -1);
+            const criteria: any = {};
+            featureStr.split(/\s+/).forEach((f: string) => {
+              if (f.startsWith('+') || f.startsWith('-')) {
+                criteria[f.slice(1)] = f.startsWith('+');
+              }
+            });
+            return getPhonemesByFeatures(criteria);
+          } else if (/^[A-Z]$/.test(operand)) {
+            return this.engine.getClasses()[operand] || [];
+          } else {
+            return [operand];
+          }
+        };
+
+        const leftMembers = getMembers(left);
+        const isNegation = right.startsWith('!');
+        const rightOperand = isNegation ? right.slice(1) : right;
+        const rightMembers = getMembers(rightOperand);
+
+        let result: string[];
+        if (isNegation) {
+          const rightSet = new Set(rightMembers);
+          result = leftMembers.filter(m => !rightSet.has(m));
+        } else {
+          const rightSet = new Set(rightMembers);
+          result = leftMembers.filter(m => rightSet.has(m));
+        }
+
+        return result.length > 0
+          ? `(?:${result.map(escapeRegExp).join('|')})`
+          : '(?!)';
+      });
+      }
+
       return res;
 
     };
@@ -1228,6 +1399,7 @@ class Rule {
     const beforePart = translatePart(before, true, false);
 
     const afterPart = translatePart(after, false, false);
+
 
 
 
@@ -1263,8 +1435,7 @@ class Rule {
 
     regexStr += matchPart;
 
-    if (effectiveAfterPart) regexStr += `(?=${effectiveAfterPart})`;
-
+    if (effectiveAfterPart) regexStr += `(?=(?:\\.)?${effectiveAfterPart})`;
 
 
     // Handle exceptions
@@ -1298,8 +1469,6 @@ class Rule {
       }
 
     }
-
-
 
     return { regexStr, subscriptMap, featureVars };
 
@@ -2710,8 +2879,13 @@ export class BlendedScaEngine {
     // a = o        =>  a > o
 
     // Handle assignment-style rules: X = Y if ENV  =>  X > Y / ENV
-
     normalizedScript = normalizedScript.replace(/(\S+)\s*=\s*(\S+)\s+if\s+(.+)/g, '$1 > $2 / $3');
+
+    // Handle Script-style rules with environments: X = Y / ENV  =>  X > Y / ENV
+    normalizedScript = normalizedScript.replace(/^(\S+)\s*=\s*(\S+)\s+\/\s*(.+)$/gm, '$1 > $2 / $3');
+
+    // Handle Script-style class operations: C-k = Y, A&B = Y, C&!V = Y  =>  C-k > Y, A&B > Y, C&!V > Y
+    normalizedScript = normalizedScript.replace(/^([A-Z](?:-[a-zA-Z]+|&!?[A-Z]))\s*=\s*(\S+)$/gm, '$1 > $2');
 
     // Handle Script-style directives: [propagate], [ltr], [rtl]  =>  propagate:, ltr:, rtl:
     // Do this BEFORE the assignment conversion so a = o [propagate] becomes a = o propagate:
